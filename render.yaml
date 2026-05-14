@@ -2,21 +2,15 @@ services:
   - type: web
     name: gospel-conversation-simulator
     runtime: node
-    plan: starter
-    buildCommand: npm install
-    startCommand: node server.js
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
     healthCheckPath: /healthz
-    disk:
-      name: gospel-conversation-data
-      mountPath: /var/data
-      sizeGB: 1
     envVars:
       - key: NODE_ENV
         value: production
       - key: ENABLE_DEV_LOGIN
         value: "false"
-      - key: STORAGE_DIR
-        value: /var/data
       - key: OPENAI_CHAT_MODEL
         value: gpt-5.4-mini
       - key: OPENAI_FEEDBACK_MODEL
