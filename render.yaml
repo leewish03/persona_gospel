@@ -16,7 +16,7 @@ services:
       - key: OPENAI_FEEDBACK_MODEL
         value: gpt-5.4
       - key: APP_BASE_URL
-        sync: false
+        value: https://gospel-conversation-simulator.onrender.com
       - key: OPENAI_API_KEY
         sync: false
       - key: ADMIN_EMAILS
