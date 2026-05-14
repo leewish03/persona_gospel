@@ -317,12 +317,75 @@ h3 {
 .context-image {
   width: 100%;
   aspect-ratio: 16 / 9;
-  margin-top: 18px;
+  margin: 0 0 18px;
   border-radius: 18px;
   object-fit: cover;
   object-position: center top;
   background: #dfe8e5;
   box-shadow: 0 12px 28px rgba(23, 33, 31, 0.12);
+}
+
+.review-screen {
+  padding-bottom: 46px;
+}
+
+.review-summary {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 14px;
+  border: 1px solid rgba(27, 128, 116, 0.18);
+  border-radius: 14px;
+  background: #edf8f6;
+}
+
+.review-summary > span {
+  color: var(--teal-deep);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.review-summary > strong {
+  font-size: 1.06rem;
+}
+
+.review-summary dl {
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr);
+  gap: 7px 10px;
+  margin: 0;
+}
+
+.review-summary dt {
+  color: var(--teal-deep);
+  font-size: 0.8rem;
+  font-weight: 900;
+}
+
+.review-summary dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.scroll-hint {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #fff7e8;
+  color: #735018;
+  font-size: 0.86rem;
+  font-weight: 900;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.scroll-hint.is-done {
+  background: #edf8f6;
+  color: var(--teal-deep);
 }
 
 .field {

@@ -1,4 +1,5 @@
-const flowScreens = ["home", "persona", "context", "chat", "feedback"];
+const flowScreens = ["home", "persona", "context", "review", "chat", "feedback"];
+const setupScreens = ["persona", "context", "review"];
 
 const state = {
   personas: [],
@@ -11,7 +12,8 @@ const state = {
   latestFeedbackText: "",
   sessionStarted: false,
   isBusy: false,
-  historyLoaded: false
+  historyLoaded: false,
+  reviewScrolled: false
 };
 
 const els = {
@@ -34,6 +36,9 @@ const els = {
   setting: document.querySelector("#setting"),
   goal: document.querySelector("#goal"),
   contextImage: document.querySelector("#contextImage"),
+  reviewScreen: document.querySelector("#screen-review"),
+  reviewSessionSummary: document.querySelector("#reviewSessionSummary"),
+  reviewScrollHint: document.querySelector("#reviewScrollHint"),
   personaDetail: document.querySelector("#personaDetail"),
   chatMeta: document.querySelector("#chatMeta"),
   messageList: document.querySelector("#messageList"),
@@ -83,8 +88,9 @@ const screenMeta = {
   home: { eyebrow: "Witness Lab", title: "복음 대화 훈련소", action: "훈련 시작" },
   login: { eyebrow: "Account", title: "로그인" },
   profile: { eyebrow: "Profile", title: "기본 정보 입력", action: "저장하고 시작" },
-  persona: { eyebrow: "1 / 2", title: "페르소나 선택", action: "다음", secondary: "랜덤 선택" },
-  context: { eyebrow: "2 / 2", title: "상황 설정", action: "훈련 시작" },
+  persona: { eyebrow: "1 / 3", title: "페르소나 선택", action: "다음", secondary: "랜덤 선택" },
+  context: { eyebrow: "2 / 3", title: "상황 설정", action: "다음" },
+  review: { eyebrow: "3 / 3", title: "프로필 확인", action: "확인하고 시작" },
   chat: { eyebrow: "Training", title: "대화 연습", action: "종료하고 피드백" },
   feedback: { eyebrow: "Report", title: "피드백", action: "공유하기", secondary: "같은 설정으로 다시" },
   history: { eyebrow: "History", title: "훈련 기록" },
@@ -157,8 +163,15 @@ async function postJson(path, payload = {}) {
 }
 
 function goTo(screen) {
-  if (screen === "persona" || screen === "context" || screen === "chat") {
+  if (screen === "persona" || screen === "context" || screen === "review" || screen === "chat") {
     if (!ensureReadyForTraining()) return;
+  }
+  if (screen === "review") {
+    state.reviewScrolled = false;
+    requestAnimationFrame(() => {
+      els.reviewScreen.scrollTop = 0;
+      updateReviewGate();
+    });
   }
   state.currentScreen = screen;
   if (screen !== "context") els.contextError.textContent = "";
@@ -196,7 +209,10 @@ function previousScreen() {
 
 function setBusy(isBusy, label = "") {
   state.isBusy = isBusy;
-  els.primaryAction.disabled = isBusy || (state.currentScreen === "feedback" && !state.latestFeedbackText);
+  els.primaryAction.disabled =
+    isBusy ||
+    (state.currentScreen === "feedback" && !state.latestFeedbackText) ||
+    (state.currentScreen === "review" && !state.reviewScrolled);
   els.secondaryAction.disabled = isBusy;
   els.backButton.disabled = isBusy || (state.currentScreen === "chat" && state.sessionStarted);
   els.resetButton.disabled = isBusy;
@@ -218,9 +234,12 @@ function renderScreens() {
 function renderChrome() {
   const meta = screenMeta[state.currentScreen] || screenMeta.home;
   const flowIndex = Math.max(0, flowScreens.indexOf(state.currentScreen));
+  const setupIndex = setupScreens.indexOf(state.currentScreen);
   els.screenEyebrow.textContent = meta.eyebrow;
   els.screenTitle.textContent = meta.title;
-  els.progressBar.style.width = `${((flowIndex + 1) / flowScreens.length) * 100}%`;
+  const progress =
+    setupIndex >= 0 ? ((setupIndex + 1) / setupScreens.length) * 100 : ((flowIndex + 1) / flowScreens.length) * 100;
+  els.progressBar.style.width = `${progress}%`;
 
   els.backButton.hidden = false;
   els.resetButton.hidden = false;
@@ -234,7 +253,9 @@ function renderChrome() {
   els.secondaryAction.textContent = meta.secondary || "";
   els.secondaryAction.hidden = !meta.secondary;
   els.bottomBar.classList.toggle("has-secondary", Boolean(meta.secondary));
-  els.primaryAction.disabled = state.currentScreen === "feedback" && !state.latestFeedbackText;
+  els.primaryAction.disabled =
+    (state.currentScreen === "feedback" && !state.latestFeedbackText) ||
+    (state.currentScreen === "review" && !state.reviewScrolled);
 
   const showTabs = hasUser() && profileComplete() && !["login", "profile", "chat"].includes(state.currentScreen);
   els.tabBar.hidden = !showTabs;
@@ -287,6 +308,21 @@ function renderPersonaDetail() {
   `;
 }
 
+function renderReviewSummary() {
+  const persona = currentPersona();
+  const session = currentSession();
+  if (!persona) return;
+  els.reviewSessionSummary.innerHTML = `
+    <span>선택한 훈련</span>
+    <strong>${persona.name}</strong>
+    <dl>
+      <dt>관계</dt><dd>${relationshipText[session.relationship] || "선택 안 됨"}</dd>
+      <dt>상황</dt><dd>${settingText[session.setting] || "선택 안 됨"}</dd>
+      <dt>훈련 초점</dt><dd>${goalText[session.goal] || "선택 안 됨"}</dd>
+    </dl>
+  `;
+}
+
 function renderChatMeta() {
   const persona = currentPersona();
   if (!persona) return;
@@ -297,7 +333,14 @@ function renderChatMeta() {
 }
 
 function renderContextImage() {
-  els.contextImage.src = settingImages[els.setting.value] || "/assets/situation-first-meeting.jpg";
+  const image = settingImages[els.setting.value];
+  if (!image) {
+    els.contextImage.hidden = true;
+    els.contextImage.removeAttribute("src");
+    return;
+  }
+  els.contextImage.src = image;
+  els.contextImage.hidden = false;
 }
 
 function renderMessages() {
@@ -353,9 +396,21 @@ function render() {
   renderChrome();
   renderPersonas();
   renderPersonaDetail();
+  renderReviewSummary();
   renderContextImage();
   renderChatMeta();
   renderMessages();
+}
+
+function updateReviewGate() {
+  if (state.currentScreen !== "review") return;
+  const remaining = els.reviewScreen.scrollHeight - els.reviewScreen.scrollTop - els.reviewScreen.clientHeight;
+  const needsScroll = els.reviewScreen.scrollHeight > els.reviewScreen.clientHeight + 8;
+  const done = !needsScroll || remaining <= 8;
+  state.reviewScrolled = done;
+  els.primaryAction.disabled = !done || state.isBusy;
+  els.reviewScrollHint.textContent = done ? "확인할 준비가 되었습니다." : "프로필을 끝까지 읽으면 확인 버튼이 활성화됩니다.";
+  els.reviewScrollHint.classList.toggle("is-done", done);
 }
 
 function fillProfileForm() {
@@ -647,6 +702,7 @@ function resetContextSelections() {
   els.setting.value = "";
   els.goal.value = "";
   els.contextError.textContent = "";
+  state.reviewScrolled = false;
 }
 
 function resetAll() {
@@ -679,6 +735,14 @@ async function handlePrimaryAction() {
     return;
   }
   if (state.currentScreen === "context") {
+    if (validateContext()) goTo("review");
+    return;
+  }
+  if (state.currentScreen === "review") {
+    if (!state.reviewScrolled) {
+      updateReviewGate();
+      return;
+    }
     await startSession();
     return;
   }
@@ -762,11 +826,13 @@ for (const button of els.profileGenderButtons) {
 for (const el of [els.relationship, els.setting, els.goal]) {
   el.addEventListener("change", () => {
     if (els.relationship.value && els.setting.value && els.goal.value) els.contextError.textContent = "";
-    renderPersonaDetail();
+    state.reviewScrolled = false;
     renderContextImage();
+    renderReviewSummary();
     renderChatMeta();
   });
 }
+els.reviewScreen.addEventListener("scroll", updateReviewGate);
 for (const button of els.tabBar.querySelectorAll("button")) {
   button.addEventListener("click", () => goTo(button.dataset.tab));
 }

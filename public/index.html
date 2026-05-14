@@ -37,7 +37,7 @@
       </section>
 
       <section class="screen" id="screen-context" data-screen="context">
-        <aside class="persona-summary" id="personaDetail"></aside>
+        <img class="context-image" id="contextImage" alt="선택한 대화 상황 이미지" hidden />
         <div class="step-stack">
           <label class="field">
             <span>관계</span>
@@ -79,7 +79,12 @@
           </label>
           <p class="form-error" id="contextError" role="alert"></p>
         </div>
-        <img class="context-image" id="contextImage" src="/assets/home-hero.jpg" alt="선택한 대화 상황 이미지" />
+      </section>
+
+      <section class="screen review-screen" id="screen-review" data-screen="review">
+        <div class="review-summary" id="reviewSessionSummary"></div>
+        <aside class="persona-summary" id="personaDetail"></aside>
+        <p class="scroll-hint" id="reviewScrollHint">프로필을 끝까지 읽으면 확인 버튼이 활성화됩니다.</p>
       </section>
 
       <section class="screen" id="screen-login" data-screen="login">
