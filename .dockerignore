@@ -1,0 +1,5 @@
+storage/db.json
+*.log
+.git
+.env
+node_modules

@@ -1,0 +1,133 @@
+# 배포 가이드
+
+## 결론
+
+코드 배포 자체는 가능하다. 다만 아래 작업은 사용자 계정 권한이 필요하다.
+
+- 도메인 구매 또는 연결
+- 호스팅 서비스 계정 생성
+- OpenAI API Key 발급 및 결제 수단 등록
+- Google OAuth 앱 등록
+- Kakao OAuth 앱 등록
+- 운영자 이메일과 후원 계좌/링크 결정
+
+## 현재 앱 구조
+
+- Node.js 단일 서버
+- 정적 프론트엔드: `public`
+- 페르소나 데이터: `data/personas.json`
+- 프롬프트: `prompts`
+- 사용자/대화 저장: `storage/db.json`
+- 서버 소유 OpenAI API Key 사용
+
+## 작은 MVP 배포
+
+소규모 테스트라면 다음 구조로 충분하다.
+
+```text
+호스팅: Render / Railway / Fly.io 같은 Node 서버 호스팅
+저장소: persistent disk에 storage/db.json 보관
+로그인: Google/Kakao OAuth
+AI 비용: 운영자 OpenAI API Key
+```
+
+이 저장소에는 Render Blueprint용 `render.yaml`이 포함되어 있다.
+Render에서 Blueprint로 연결하면 web service, persistent disk, 환경변수 슬롯이 함께 생성된다.
+
+주의:
+
+- `storage/db.json`은 반드시 persistent disk에 있어야 한다.
+- Render 배포에서는 `STORAGE_DIR=/var/data`를 사용하고, persistent disk를 `/var/data`에 마운트한다.
+- 서버가 재시작되면 현재 로그인 세션은 풀릴 수 있다.
+- 여러 서버 인스턴스를 동시에 띄우면 JSON 파일 저장 방식은 부적합하다.
+
+## 안정적 운영 배포
+
+사용자가 늘어날 가능성이 있으면 아래 구조가 맞다.
+
+```text
+호스팅: Render / Railway / Fly.io / VPS
+DB: Postgres 또는 SQLite
+세션 저장소: DB 또는 Redis
+파일 저장: DB 중심
+OAuth: Google/Kakao
+```
+
+현재 코드에서 안정적 운영으로 가려면 다음 리팩터링이 필요하다.
+
+- `storage/db.json` 제거
+- 사용자, 대화, 피드백을 DB 테이블로 저장
+- 세션을 메모리가 아니라 DB/Redis에 저장
+- 관리자 화면에 사용자/대화 검색 기능 추가
+- 사용량 제한 또는 일일 호출 제한 추가
+
+## 필수 환경변수
+
+```text
+OPENAI_API_KEY=sk-...
+OPENAI_CHAT_MODEL=gpt-5.4-mini
+OPENAI_FEEDBACK_MODEL=gpt-5.4
+APP_BASE_URL=https://서비스도메인
+ADMIN_EMAILS=owner@example.com
+
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+
+KAKAO_REST_API_KEY=
+KAKAO_CLIENT_SECRET=
+
+ENABLE_DEV_LOGIN=false
+NODE_ENV=production
+STORAGE_DIR=/var/data
+```
+
+## OAuth Callback URL
+
+서비스 도메인이 `https://example.com`이라면 아래 URL을 각 플랫폼에 등록한다.
+
+```text
+Google: https://example.com/auth/google/callback
+Kakao:  https://example.com/auth/kakao/callback
+```
+
+로컬 개발용 URL은 다음과 같다.
+
+```text
+Google: http://localhost:4173/auth/google/callback
+Kakao:  http://localhost:4173/auth/kakao/callback
+```
+
+## 배포 절차
+
+1. 호스팅 서비스를 정한다.
+2. GitHub 저장소를 연결한다.
+3. Node.js 앱으로 배포한다.
+4. 환경변수를 입력한다.
+5. persistent disk를 `/app/storage` 또는 호스팅 서비스가 지정한 경로에 연결한다.
+6. 배포 URL을 확인한다.
+7. `APP_BASE_URL`을 실제 배포 URL로 바꾼다.
+8. Google/Kakao OAuth callback URL을 등록한다.
+9. 로그인, 프로필 저장, 대화 시작, 피드백 저장, 기록 조회를 테스트한다.
+10. 도메인을 연결한다.
+
+## 내가 할 수 있는 작업
+
+- 배포용 코드 구조 정리
+- Dockerfile 작성
+- 환경변수 문서화
+- DB 전환 구현
+- 관리자 기능 확장
+- 배포 실패 로그 분석
+- OAuth callback 오류 디버깅
+
+## 사용자가 해야 하는 작업
+
+- 호스팅/도메인/OAuth/OpenAI 계정의 소유자 인증
+- 결제 수단 등록
+- API Key와 OAuth Secret 발급
+- 운영 정책 결정
+
+## 현재 상태에서 바로 배포할 때의 판단
+
+지인 몇 명에게 테스트 링크를 공유하는 정도라면 현재 구조로도 가능하다.
+공개 서비스처럼 열어둘 계획이면 DB 전환과 사용량 제한을 먼저 넣는 편이 맞다.
