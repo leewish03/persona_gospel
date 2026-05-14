@@ -23,10 +23,10 @@ const els = {
   authError: document.querySelector("#authError"),
   devLoginButton: document.querySelector("#devLoginButton"),
   profileName: document.querySelector("#profileName"),
-  profileGender: document.querySelector("#profileGender"),
+  profileAge: document.querySelector("#profileAge"),
+  profileGenderButtons: document.querySelectorAll("[data-profile-gender]"),
   profileChurch: document.querySelector("#profileChurch"),
-  profileGroup: document.querySelector("#profileGroup"),
-  profileBaptism: document.querySelector("#profileBaptism"),
+  profileUseCase: document.querySelector("#profileUseCase"),
   profileError: document.querySelector("#profileError"),
   contextError: document.querySelector("#contextError"),
   personaList: document.querySelector("#personaList"),
@@ -335,10 +335,10 @@ function renderSettings() {
     <dl class="profile-list">
       <dt>이메일</dt><dd>${user.email || "없음"}</dd>
       <dt>이름</dt><dd>${profile.name || user.displayName || "미입력"}</dd>
+      <dt>나이</dt><dd>${profile.age || "미입력"}</dd>
       <dt>성별</dt><dd>${profile.gender || "미입력"}</dd>
       <dt>소속 교회</dt><dd>${profile.church || "미입력"}</dd>
-      <dt>소속 모임</dt><dd>${profile.group || "미입력"}</dd>
-      <dt>침례 여부</dt><dd>${profile.baptismStatus || "미입력"}</dd>
+      <dt>사용 용도</dt><dd>${profile.useCase || "미입력"}</dd>
     </dl>
     <button class="secondary-button full-width" id="editProfileButton" type="button">프로필 수정</button>
   `;
@@ -361,10 +361,23 @@ function render() {
 function fillProfileForm() {
   const profile = state.auth.user?.profile || {};
   els.profileName.value = profile.name || state.auth.user?.displayName || "";
-  els.profileGender.value = profile.gender || "";
+  els.profileAge.value = profile.age || "";
+  setProfileGender(profile.gender || "");
   els.profileChurch.value = profile.church || "";
-  els.profileGroup.value = profile.group || "";
-  els.profileBaptism.value = profile.baptismStatus || "";
+  els.profileUseCase.value = profile.useCase || "";
+}
+
+function selectedProfileGender() {
+  return [...els.profileGenderButtons].find((button) => button.getAttribute("aria-pressed") === "true")?.dataset
+    .profileGender || "";
+}
+
+function setProfileGender(gender) {
+  for (const button of els.profileGenderButtons) {
+    const selected = button.dataset.profileGender === gender;
+    button.classList.toggle("is-selected", selected);
+    button.setAttribute("aria-pressed", String(selected));
+  }
 }
 
 function validateContext() {
@@ -374,9 +387,9 @@ function validateContext() {
 }
 
 function validateProfile() {
-  const values = [els.profileName.value, els.profileGender.value, els.profileChurch.value, els.profileGroup.value, els.profileBaptism.value];
+  const values = [els.profileName.value, els.profileAge.value, selectedProfileGender(), els.profileChurch.value, els.profileUseCase.value];
   if (values.every((value) => value.trim())) return true;
-  els.profileError.textContent = "이름, 성별, 소속 교회, 소속 모임, 침례 여부를 모두 입력해주세요.";
+  els.profileError.textContent = "이름, 나이, 성별, 소속 교회, 사용 용도를 모두 입력해주세요.";
   return false;
 }
 
@@ -387,10 +400,10 @@ async function saveProfile() {
     const data = await postJson("/api/profile", {
       profile: {
         name: els.profileName.value,
-        gender: els.profileGender.value,
+        age: els.profileAge.value,
+        gender: selectedProfileGender(),
         church: els.profileChurch.value,
-        group: els.profileGroup.value,
-        baptismStatus: els.profileBaptism.value
+        useCase: els.profileUseCase.value
       }
     });
     state.auth.user = data.user;
@@ -740,6 +753,12 @@ els.secondaryAction.addEventListener("click", handleSecondaryAction);
 els.chatForm.addEventListener("submit", sendMessage);
 els.devLoginButton.addEventListener("click", devLogin);
 els.logoutButton.addEventListener("click", logout);
+for (const button of els.profileGenderButtons) {
+  button.addEventListener("click", () => {
+    setProfileGender(button.dataset.profileGender);
+    els.profileError.textContent = "";
+  });
+}
 for (const el of [els.relationship, els.setting, els.goal]) {
   el.addEventListener("change", () => {
     if (els.relationship.value && els.setting.value && els.goal.value) els.contextError.textContent = "";

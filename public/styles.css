@@ -365,6 +365,28 @@ textarea:focus {
   box-shadow: 0 0 0 3px rgba(27, 128, 116, 0.14);
 }
 
+.segmented-control {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.segmented-control button {
+  min-height: 52px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--ink);
+  background: #ffffff;
+  font-weight: 900;
+}
+
+.segmented-control button.is-selected {
+  border-color: var(--teal);
+  color: white;
+  background: var(--teal);
+  box-shadow: 0 8px 20px rgba(27, 128, 116, 0.16);
+}
+
 .helper {
   margin: 0;
   color: var(--muted);

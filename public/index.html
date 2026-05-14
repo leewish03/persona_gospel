@@ -101,33 +101,26 @@
           </label>
 
           <label class="field">
+            <span>나이</span>
+            <input id="profileAge" type="number" inputmode="numeric" min="10" max="99" placeholder="예: 24" />
+          </label>
+
+          <label class="field">
             <span>성별</span>
-            <select id="profileGender">
-              <option value="" selected disabled>선택하세요</option>
-              <option value="남성">남성</option>
-              <option value="여성">여성</option>
-              <option value="응답 안 함">응답 안 함</option>
-            </select>
+            <div class="segmented-control" role="radiogroup" aria-label="성별">
+              <button type="button" data-profile-gender="남성" aria-pressed="false">남성</button>
+              <button type="button" data-profile-gender="여성" aria-pressed="false">여성</button>
+            </div>
           </label>
 
           <label class="field">
             <span>소속 교회</span>
-            <input id="profileChurch" type="text" placeholder="예: OO교회" />
+            <input id="profileChurch" type="text" placeholder="예: OO교회 청년부 / CBF" />
           </label>
 
           <label class="field">
-            <span>소속 모임</span>
-            <input id="profileGroup" type="text" placeholder="예: 청년부 / 소그룹 / 캠퍼스 모임" />
-          </label>
-
-          <label class="field">
-            <span>침례 여부</span>
-            <select id="profileBaptism">
-              <option value="" selected disabled>선택하세요</option>
-              <option value="침례 받음">침례 받음</option>
-              <option value="아직 받지 않음">아직 받지 않음</option>
-              <option value="확인 필요">확인 필요</option>
-            </select>
+            <span>사용 용도</span>
+            <input id="profileUseCase" type="text" placeholder="예: 청년회 활동 / CBF 활동 / 개인 전도 훈련" />
           </label>
           <p class="helper">이 정보는 무분별한 사용을 줄이고 개인 훈련 기록을 구분하기 위한 최소 정보입니다.</p>
           <p class="form-error" id="profileError" role="alert"></p>

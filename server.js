@@ -199,10 +199,10 @@ function publicUser(user) {
 function isProfileComplete(profile = {}) {
   return Boolean(
     String(profile.name || "").trim() &&
+      String(profile.age || "").trim() &&
       String(profile.gender || "").trim() &&
       String(profile.church || "").trim() &&
-      String(profile.group || "").trim() &&
-      String(profile.baptismStatus || "").trim()
+      String(profile.useCase || "").trim()
   );
 }
 
@@ -276,10 +276,10 @@ function upsertOAuthUser({ provider, providerId, email, displayName, avatarUrl }
 function sanitizeProfile(input = {}) {
   return {
     name: String(input.name || "").trim(),
+    age: String(input.age || "").trim(),
     gender: String(input.gender || "").trim(),
     church: String(input.church || "").trim(),
-    group: String(input.group || "").trim(),
-    baptismStatus: String(input.baptismStatus || "").trim()
+    useCase: String(input.useCase || "").trim()
   };
 }
 
@@ -699,7 +699,7 @@ async function handleAppApi(req, res, path) {
     const body = await readJson(req);
     const profile = sanitizeProfile(body.profile || body);
     if (!isProfileComplete(profile)) {
-      json(res, 400, { error: "이름, 성별, 소속 교회, 소속 모임, 침례 여부를 모두 입력해야 합니다." });
+      json(res, 400, { error: "이름, 나이, 성별, 소속 교회, 사용 용도를 모두 입력해야 합니다." });
       return true;
     }
     user.profile = profile;
