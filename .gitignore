@@ -1,2 +1,5 @@
 storage/db.json
+.env
+.env.*
+!.env.example
 *.log
