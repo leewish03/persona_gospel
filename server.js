@@ -1,9 +1,10 @@
 import { createServer } from "node:http";
+import { Buffer } from "node:buffer";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 
 const rootDir = fileURLToPath(new URL(".", import.meta.url));
 loadLocalEnv(join(rootDir, ".env"));
@@ -28,6 +29,11 @@ const adminEmails = new Set(
     .map((email) => email.trim().toLowerCase())
     .filter(Boolean)
 );
+const sessionSecret =
+  globalThis.process?.env?.SESSION_SECRET ||
+  globalThis.process?.env?.GOOGLE_CLIENT_SECRET ||
+  globalThis.process?.env?.KAKAO_CLIENT_SECRET ||
+  "";
 const storageDir = globalThis.process?.env?.STORAGE_DIR || join(rootDir, "storage");
 const dbPath = join(storageDir, "db.json");
 const supabaseUrl = String(globalThis.process?.env?.SUPABASE_URL || "").replace(/\/+$/, "");
@@ -453,6 +459,39 @@ function clearSessionCookie(res) {
   res.setHeader("Set-Cookie", "sid=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0");
 }
 
+function signSessionPayload(payload) {
+  return createHmac("sha256", sessionSecret).update(payload).digest("base64url");
+}
+
+function safeEqual(a, b) {
+  const left = Buffer.from(a);
+  const right = Buffer.from(b);
+  return left.length === right.length && timingSafeEqual(left, right);
+}
+
+function createSessionToken(userId) {
+  const payload = Buffer.from(
+    JSON.stringify({
+      userId,
+      exp: Date.now() + 1000 * 60 * 60 * 24 * 30
+    })
+  ).toString("base64url");
+  return `${payload}.${signSessionPayload(payload)}`;
+}
+
+function verifySessionToken(token) {
+  if (!sessionSecret || !token.includes(".")) return "";
+  const [payload, signature] = token.split(".");
+  if (!payload || !signature || !safeEqual(signature, signSessionPayload(payload))) return "";
+  try {
+    const data = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    if (!data.userId || Number(data.exp) < Date.now()) return "";
+    return String(data.userId);
+  } catch {
+    return "";
+  }
+}
+
 function publicUser(user) {
   if (!user) return null;
   const profile = user.profile || {};
@@ -482,8 +521,9 @@ function isProfileComplete(profile = {}) {
 function currentUser(req) {
   const sid = parseCookies(req).sid;
   const session = sid ? sessions.get(sid) : null;
-  if (!session) return null;
-  return db.users.find((user) => user.id === session.userId) || null;
+  const userId = session?.userId || (sid ? verifySessionToken(sid) : "");
+  if (!userId) return null;
+  return db.users.find((user) => user.id === userId) || null;
 }
 
 function requireUser(req, res) {
@@ -506,6 +546,10 @@ function requireCompleteProfile(req, res) {
 }
 
 function createSession(res, user) {
+  if (sessionSecret) {
+    setSessionCookie(res, createSessionToken(user.id));
+    return;
+  }
   const sid = randomUUID();
   sessions.set(sid, { userId: user.id, createdAt: new Date().toISOString() });
   setSessionCookie(res, sid);
