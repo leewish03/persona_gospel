@@ -89,7 +89,7 @@ const screenMeta = {
   login: { eyebrow: "Account", title: "로그인" },
   profile: { eyebrow: "Profile", title: "기본 정보 입력", action: "저장하고 시작" },
   persona: { eyebrow: "1 / 3", title: "페르소나 선택", action: "다음", secondary: "랜덤 선택" },
-  context: { eyebrow: "2 / 3", title: "상황 설정", action: "다음" },
+  context: { eyebrow: "2 / 3", title: "상황 설정", action: "다음", secondary: "랜덤 선택" },
   review: { eyebrow: "3 / 3", title: "프로필 확인", action: "확인하고 시작" },
   chat: { eyebrow: "Training", title: "대화 연습", action: "종료하고 피드백" },
   feedback: { eyebrow: "Report", title: "피드백", action: "공유하기", secondary: "같은 설정으로 다시" },
@@ -182,6 +182,12 @@ function goTo(screen) {
   render();
 }
 
+function updateViewportHeight() {
+  const height = window.visualViewport?.height || window.innerHeight;
+  document.documentElement.style.setProperty("--app-height", `${height}px`);
+  if (state.currentScreen === "chat") requestAnimationFrame(scrollMessagesToBottom);
+}
+
 function ensureReadyForTraining() {
   if (!hasUser()) {
     state.currentScreen = "login";
@@ -257,7 +263,7 @@ function renderChrome() {
     (state.currentScreen === "feedback" && !state.latestFeedbackText) ||
     (state.currentScreen === "review" && !state.reviewScrolled);
 
-  const showTabs = hasUser() && profileComplete() && !["login", "profile", "chat"].includes(state.currentScreen);
+  const showTabs = hasUser() && profileComplete() && !["login", "profile"].includes(state.currentScreen);
   els.tabBar.hidden = !showTabs;
   for (const button of els.tabBar.querySelectorAll("button")) {
     const tab = button.dataset.tab;
@@ -366,6 +372,10 @@ function renderMessages() {
     body.textContent = message.content;
     els.messageList.append(node);
   }
+  scrollMessagesToBottom();
+}
+
+function scrollMessagesToBottom() {
   els.messageList.scrollTop = els.messageList.scrollHeight;
 }
 
@@ -526,6 +536,10 @@ async function startSession() {
 
 async function sendMessage(event) {
   event.preventDefault();
+  await submitMessage();
+}
+
+async function submitMessage() {
   const content = els.messageInput.value.trim();
   if (!content || state.isBusy || !state.sessionStarted) return;
 
@@ -697,6 +711,23 @@ function randomizePersona() {
   render();
 }
 
+function randomOptionValue(select) {
+  const options = [...select.options].filter((option) => option.value && !option.disabled);
+  return options[Math.floor(Math.random() * options.length)]?.value || "";
+}
+
+function randomizeContext() {
+  if (state.sessionStarted) return;
+  els.relationship.value = randomOptionValue(els.relationship);
+  els.setting.value = randomOptionValue(els.setting);
+  els.goal.value = randomOptionValue(els.goal);
+  els.contextError.textContent = "";
+  state.reviewScrolled = false;
+  renderContextImage();
+  renderReviewSummary();
+  renderChatMeta();
+}
+
 function resetContextSelections() {
   els.relationship.value = "";
   els.setting.value = "";
@@ -763,6 +794,10 @@ async function handleSecondaryAction() {
     randomizePersona();
     return;
   }
+  if (state.currentScreen === "context") {
+    randomizeContext();
+    return;
+  }
   if (state.currentScreen === "feedback") {
     state.messages = [];
     state.latestFeedbackText = "";
@@ -815,6 +850,14 @@ els.resetButton.addEventListener("click", resetAll);
 els.primaryAction.addEventListener("click", handlePrimaryAction);
 els.secondaryAction.addEventListener("click", handleSecondaryAction);
 els.chatForm.addEventListener("submit", sendMessage);
+els.messageInput.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+  event.preventDefault();
+  void submitMessage();
+});
+els.messageInput.addEventListener("focus", () => {
+  requestAnimationFrame(scrollMessagesToBottom);
+});
 els.devLoginButton.addEventListener("click", devLogin);
 els.logoutButton.addEventListener("click", logout);
 for (const button of els.profileGenderButtons) {
@@ -834,8 +877,19 @@ for (const el of [els.relationship, els.setting, els.goal]) {
 }
 els.reviewScreen.addEventListener("scroll", updateReviewGate);
 for (const button of els.tabBar.querySelectorAll("button")) {
-  button.addEventListener("click", () => goTo(button.dataset.tab));
+  button.addEventListener("click", () => {
+    if (button.dataset.tab === "home" && state.sessionStarted) {
+      goTo("chat");
+      return;
+    }
+    goTo(button.dataset.tab);
+  });
 }
+
+updateViewportHeight();
+window.addEventListener("resize", updateViewportHeight);
+window.visualViewport?.addEventListener("resize", updateViewportHeight);
+window.visualViewport?.addEventListener("scroll", updateViewportHeight);
 
 init().catch((error) => {
   state.messages = [{ role: "system", content: error.message }];

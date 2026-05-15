@@ -18,13 +18,19 @@
   box-sizing: border-box;
 }
 
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
 [hidden] {
   display: none !important;
 }
 
 body {
   margin: 0;
-  min-height: 100vh;
+  min-height: 100dvh;
   color: var(--ink);
   background: linear-gradient(135deg, #e8eee9 0%, #f7f1e8 50%, #f4e9ed 100%);
   font-family:
@@ -55,8 +61,9 @@ select:disabled {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr) auto auto;
   width: min(100vw, 480px);
-  height: 100vh;
-  min-height: 680px;
+  height: var(--app-height, 100dvh);
+  min-height: 0;
+  max-height: var(--app-height, 100dvh);
   margin: 0 auto;
   overflow: hidden;
   background: var(--surface);
@@ -539,11 +546,19 @@ textarea:focus {
 }
 
 .chat-screen {
-  padding: 12px 12px 16px;
+  padding: 12px 12px 10px;
   background: #f0eee8;
 }
 
+.chat-screen.is-active {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .chat-meta {
+  flex: 0 0 auto;
   margin: 0 6px 12px;
   padding: 10px 12px;
   border-radius: 999px;
@@ -559,7 +574,11 @@ textarea:focus {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  min-height: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 4px 12px;
+  overscroll-behavior: contain;
 }
 
 .message {
@@ -934,8 +953,9 @@ textarea:focus {
   }
 
   .app-frame {
-    height: min(900px, calc(100vh - 44px));
+    height: min(900px, calc(var(--app-height, 100dvh) - 44px));
     min-height: 680px;
+    max-height: min(900px, calc(var(--app-height, 100dvh) - 44px));
     border: 1px solid rgba(221, 213, 201, 0.78);
     border-radius: 28px;
   }
@@ -944,7 +964,7 @@ textarea:focus {
 @media (max-width: 430px) {
   .app-frame {
     width: 100vw;
-    min-height: 100vh;
+    min-height: 0;
   }
 
   h2 {
