@@ -13,8 +13,15 @@ const state = {
   sessionStarted: false,
   isBusy: false,
   historyLoaded: false,
+  historyItems: [],
+  selectedHistoryId: "",
+  historyStats: null,
+  historyFilters: {},
+  appSettings: null,
+  adminLoaded: false,
   reviewScrolled: false,
-  keyboardOpen: false
+  keyboardOpen: false,
+  inputFocused: false
 };
 
 const els = {
@@ -45,7 +52,9 @@ const els = {
   messageList: document.querySelector("#messageList"),
   feedbackPanel: document.querySelector("#feedbackPanel"),
   historyList: document.querySelector("#historyList"),
+  historyDetailPanel: document.querySelector("#historyDetailPanel"),
   accountPanel: document.querySelector("#accountPanel"),
+  donationPanel: document.querySelector("#donationPanel"),
   adminPanel: document.querySelector("#adminPanel"),
   logoutButton: document.querySelector("#logoutButton"),
   chatForm: document.querySelector("#chatForm"),
@@ -67,12 +76,12 @@ const relationshipText = {
 };
 
 const settingText = {
-  cafe_catchup: "카페에서 오랜만에 근황을 나누는 중",
+  cafe_catchup: "카페에서 대화를 나누는 중",
   meal_after_group: "식사/모임 후 둘만 남아 이야기하는 중",
   walk_after_work: "퇴근길에 함께 걸어가는 중",
   late_night_dm: "밤에 카톡/DM으로 진지한 이야기가 이어지는 중",
   campus_or_office_break: "학교/직장 쉬는 시간에 잠깐 마주 앉은 중",
-  concern_shared: "상대가 먼저 고민을 털어놓은 직후",
+  concern_shared: "페르소나가 고민을 털어놓은 직후",
   faith_topic_arose: "신앙/교회 이야기가 자연스럽게 언급된 직후"
 };
 
@@ -95,6 +104,7 @@ const screenMeta = {
   chat: { eyebrow: "Training", title: "대화 연습", action: "종료하고 피드백" },
   feedback: { eyebrow: "Report", title: "피드백", action: "공유하기", secondary: "같은 설정으로 다시" },
   history: { eyebrow: "History", title: "훈련 기록" },
+  historyDetail: { eyebrow: "History", title: "기록 상세" },
   settings: { eyebrow: "Settings", title: "설정" },
   admin: { eyebrow: "Admin", title: "관리자" }
 };
@@ -178,6 +188,7 @@ function goTo(screen) {
   if (screen !== "context") els.contextError.textContent = "";
   if (screen !== "profile") els.profileError.textContent = "";
   if (screen === "history") void loadHistory();
+  if (screen === "historyDetail") void loadHistoryDetail(state.selectedHistoryId);
   if (screen === "settings") renderSettings();
   if (screen === "admin") void loadAdmin();
   render();
@@ -185,10 +196,14 @@ function goTo(screen) {
 
 function updateViewportHeight() {
   const height = window.visualViewport?.height || window.innerHeight;
-  const keyboardOpen = Boolean(window.visualViewport && window.innerHeight - window.visualViewport.height > 140);
+  const keyboardOpen = Boolean(
+    state.currentScreen === "chat" &&
+      (state.inputFocused || (window.visualViewport && window.innerHeight - window.visualViewport.height > 140))
+  );
   document.documentElement.style.setProperty("--app-height", `${height}px`);
   if (state.keyboardOpen !== keyboardOpen) {
     state.keyboardOpen = keyboardOpen;
+    document.body.classList.toggle("keyboard-open", keyboardOpen);
     renderChrome();
   }
   if (state.currentScreen === "chat") requestAnimationFrame(scrollMessagesToBottom);
@@ -210,6 +225,10 @@ function ensureReadyForTraining() {
 function previousScreen() {
   if (state.currentScreen === "chat" && state.sessionStarted) return;
   if (state.currentScreen === "home") return;
+  if (state.currentScreen === "historyDetail") {
+    goTo("history");
+    return;
+  }
   if (state.currentScreen === "history" || state.currentScreen === "settings" || state.currentScreen === "admin") {
     goTo("home");
     return;
@@ -260,7 +279,9 @@ function renderChrome() {
 
   els.chatForm.hidden = state.currentScreen !== "chat";
   const actionless = ["login", "history", "settings", "admin"].includes(state.currentScreen);
-  els.bottomBar.hidden = actionless || (state.currentScreen === "chat" && state.sessionStarted && state.messages.length < 2);
+  els.bottomBar.hidden =
+    actionless ||
+    (state.currentScreen === "chat" && state.sessionStarted && (state.messages.length < 2 || state.keyboardOpen));
   els.primaryAction.textContent = meta.action || "";
   els.secondaryAction.textContent = meta.secondary || "";
   els.secondaryAction.hidden = !meta.secondary;
@@ -410,6 +431,52 @@ function renderSettings() {
     fillProfileForm();
     goTo("profile");
   });
+  renderDonationPanel();
+}
+
+function renderDonationPanel() {
+  const donation = state.appSettings?.donation || {};
+  if (donation.enabled === false) {
+    els.donationPanel.innerHTML = `<h3>후원</h3><p>후원 안내는 준비 중입니다.</p>`;
+    return;
+  }
+  els.donationPanel.innerHTML = `
+    <h3>${donation.title || "후원"}</h3>
+    <p>${donation.body || "이 앱의 AI 호출 비용은 운영자가 부담합니다. 지속 운영을 돕고 싶다면 자발적으로 후원할 수 있습니다."}</p>
+    <div class="donation-box">
+      <strong>후원 계좌</strong>
+      <span>${donation.account || "추후 입력"}</span>
+    </div>
+  `;
+}
+
+function sessionLabels(session = {}) {
+  return {
+    persona: state.personas.find((entry) => entry.id === session.personaId)?.name || "페르소나",
+    relationship: relationshipText[session.relationship] || session.relationship || "",
+    setting: settingText[session.setting] || session.setting || "",
+    goal: goalText[session.goal] || session.goal || ""
+  };
+}
+
+function formatDate(value) {
+  if (!value) return "";
+  return new Date(value).toLocaleString("ko-KR", { dateStyle: "medium", timeStyle: "short" });
+}
+
+function restoreSession(session = {}) {
+  state.selectedPersonaId = session.personaId || state.selectedPersonaId;
+  els.relationship.value = session.relationship || "";
+  els.setting.value = session.setting || "";
+  els.goal.value = session.goal || "";
+  state.activeSession = null;
+  state.messages = [];
+  state.latestFeedbackText = "";
+  state.sessionStarted = false;
+  state.reviewScrolled = false;
+  renderContextImage();
+  renderReviewSummary();
+  goTo("review");
 }
 
 function render() {
@@ -594,6 +661,14 @@ function markdownToHtml(markdown) {
     .replace(/<\/ul><\/p>/g, "</ul>");
 }
 
+function escapeHtml(value = "") {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 async function finishSession() {
   state.latestFeedbackText = "";
   setBusy(true, "primary");
@@ -628,31 +703,151 @@ async function finishSession() {
 }
 
 async function loadHistory() {
-  if (state.historyLoaded) return;
   els.historyList.innerHTML = `<p class="helper">기록을 불러오는 중입니다.</p>`;
   try {
-    const data = await getJson("/api/conversations");
+    const query = new URLSearchParams();
+    const existingForm = document.querySelector("#historyFilters");
+    if (existingForm) {
+      for (const key of ["q", "personaId", "goal", "status"]) {
+        const value = existingForm.elements[key]?.value;
+        if (value) query.set(key, value);
+        state.historyFilters[key] = value || "";
+      }
+    }
+    const [stats, data] = await Promise.all([getJson("/api/me/stats"), getJson(`/api/conversations?${query}`)]);
     state.historyLoaded = true;
+    state.historyStats = stats;
+    state.historyItems = data.conversations || [];
     if (!data.conversations.length) {
-      els.historyList.innerHTML = `<p class="helper">아직 저장된 훈련 기록이 없습니다.</p>`;
+      els.historyList.innerHTML = renderHistoryShell(`<p class="helper">조건에 맞는 훈련 기록이 없습니다.</p>`);
+      bindHistoryEvents();
       return;
     }
-    els.historyList.innerHTML = data.conversations
-      .map((item) => {
-        const persona = state.personas.find((entry) => entry.id === item.session?.personaId);
-        const created = new Date(item.createdAt).toLocaleString("ko-KR", { dateStyle: "medium", timeStyle: "short" });
-        return `
-          <article class="history-item">
-            <strong>${persona?.name || "페르소나"} · ${item.status === "finished" ? "완료" : "진행 중"}</strong>
-            <span>${created}</span>
-            <p>${relationshipText[item.session?.relationship] || ""} · ${settingText[item.session?.setting] || ""}</p>
-            ${item.feedbackText ? `<details><summary>피드백 보기</summary>${markdownToHtml(item.feedbackText)}</details>` : ""}
-          </article>
-        `;
-      })
-      .join("");
+    els.historyList.innerHTML = renderHistoryShell(
+      data.conversations
+        .map((item) => {
+          const labels = sessionLabels(item.session);
+          return `
+            <article class="history-item">
+              <strong>${labels.persona} · ${item.status === "finished" ? "완료" : "진행 중"}</strong>
+              <span>${formatDate(item.createdAt)}</span>
+              <p>${labels.relationship} · ${labels.setting}</p>
+              <p><b>훈련 초점</b> ${labels.goal}</p>
+              ${item.feedbackSummary ? `<p class="history-summary">${item.feedbackSummary}</p>` : ""}
+              <div class="history-actions">
+                <button class="secondary-button" type="button" data-history-detail="${item.id}">상세</button>
+                <button class="secondary-button" type="button" data-history-repeat="${item.id}">같은 설정으로 다시</button>
+              </div>
+            </article>
+          `;
+        })
+        .join("")
+    );
+    bindHistoryEvents();
   } catch (error) {
     els.historyList.innerHTML = `<p class="form-error">${error.message}</p>`;
+  }
+}
+
+function renderHistoryShell(content) {
+  const stats = state.historyStats || {};
+  const topGoal = stats.byGoal?.[0]?.goal ? goalText[stats.byGoal[0].goal] || stats.byGoal[0].goal : "아직 없음";
+  const recent = stats.recentFeedbackThemes?.[0] || "피드백이 쌓이면 반복되는 훈련 포인트를 보여줍니다.";
+  return `
+    <section class="history-summary-panel">
+      <div><strong>${stats.totalConversations || 0}</strong><span>전체 훈련</span></div>
+      <div><strong>${stats.thisMonthConversations || 0}</strong><span>이번 달</span></div>
+      <p><b>주요 초점</b> ${topGoal}</p>
+      <p><b>최근 피드백</b> ${recent}</p>
+    </section>
+    <form class="filter-bar" id="historyFilters">
+      <input name="q" type="search" placeholder="검색" value="${state.historyFilters.q || ""}" />
+      <select name="personaId">
+        <option value="">전체 페르소나</option>
+        ${state.personas
+          .map((persona) => `<option value="${persona.id}" ${state.historyFilters.personaId === persona.id ? "selected" : ""}>${persona.name}</option>`)
+          .join("")}
+      </select>
+      <select name="goal">
+        <option value="">전체 초점</option>
+        ${Object.entries(goalText)
+          .map(([value, label]) => `<option value="${value}" ${state.historyFilters.goal === value ? "selected" : ""}>${label}</option>`)
+          .join("")}
+      </select>
+      <select name="status">
+        <option value="">전체 상태</option>
+        <option value="finished" ${state.historyFilters.status === "finished" ? "selected" : ""}>완료</option>
+        <option value="active" ${state.historyFilters.status === "active" ? "selected" : ""}>진행 중</option>
+      </select>
+      <button class="secondary-button" type="submit">적용</button>
+    </form>
+    <div class="history-list-inner">${content}</div>
+  `;
+}
+
+function bindHistoryEvents() {
+  const form = document.querySelector("#historyFilters");
+  if (form) {
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void loadHistory();
+    });
+  }
+  for (const button of els.historyList.querySelectorAll("[data-history-detail]")) {
+    button.addEventListener("click", () => {
+      state.selectedHistoryId = button.dataset.historyDetail;
+      goTo("historyDetail");
+    });
+  }
+  for (const button of els.historyList.querySelectorAll("[data-history-repeat]")) {
+    button.addEventListener("click", () => {
+      const item = state.historyItems.find((entry) => entry.id === button.dataset.historyRepeat);
+      if (item) restoreSession(item.session);
+    });
+  }
+}
+
+async function loadHistoryDetail(id) {
+  if (!id) {
+    els.historyDetailPanel.innerHTML = `<p class="form-error">선택된 훈련 기록이 없습니다.</p>`;
+    return;
+  }
+  els.historyDetailPanel.innerHTML = `<p class="helper">기록을 불러오는 중입니다.</p>`;
+  try {
+    const data = await getJson(`/api/conversations/${encodeURIComponent(id)}`);
+    const item = data.conversation;
+    const labels = sessionLabels(item.session);
+    els.historyDetailPanel.innerHTML = `
+      <article class="history-detail-card">
+        <h3>${labels.persona}</h3>
+        <p>${formatDate(item.createdAt)}</p>
+        <dl class="profile-list">
+          <dt>관계</dt><dd>${labels.relationship}</dd>
+          <dt>상황</dt><dd>${labels.setting}</dd>
+          <dt>훈련 초점</dt><dd>${labels.goal}</dd>
+          <dt>상태</dt><dd>${item.status === "finished" ? "완료" : "진행 중"}</dd>
+        </dl>
+        <button class="secondary-button full-width" type="button" id="repeatHistoryButton">같은 설정으로 다시 훈련</button>
+      </article>
+      <article class="history-detail-card">
+        <h3>대화 전문</h3>
+        <div class="transcript">
+          ${(item.messages || [])
+            .map(
+              (message) =>
+                `<p class="${message.role}"><b>${message.role === "user" ? "나" : labels.persona}</b>${escapeHtml(message.content)}</p>`
+            )
+            .join("")}
+        </div>
+      </article>
+      <article class="history-detail-card">
+        <h3>피드백 리포트</h3>
+        ${item.feedbackText ? markdownToHtml(item.feedbackText) : "<p>아직 피드백이 없습니다.</p>"}
+      </article>
+    `;
+    document.querySelector("#repeatHistoryButton").addEventListener("click", () => restoreSession(item.session));
+  } catch (error) {
+    els.historyDetailPanel.innerHTML = `<p class="form-error">${error.message}</p>`;
   }
 }
 
@@ -663,16 +858,122 @@ async function loadAdmin() {
   }
   els.adminPanel.innerHTML = `<p class="helper">관리자 데이터를 불러오는 중입니다.</p>`;
   try {
-    const data = await getJson("/api/admin/summary");
+    const [summary, users, conversations, usage, settings] = await Promise.all([
+      getJson("/api/admin/summary"),
+      getJson("/api/admin/users?limit=50"),
+      getJson("/api/admin/conversations?limit=50"),
+      getJson("/api/admin/usage"),
+      getJson("/api/admin/settings")
+    ]);
+    const donation = settings.settings?.donation || {};
+    const cost = settings.settings?.cost || {};
     els.adminPanel.innerHTML = `
-      <article><strong>${data.users}</strong><span>가입 사용자</span></article>
-      <article><strong>${data.completedProfiles}</strong><span>프로필 완료</span></article>
-      <article><strong>${data.conversations}</strong><span>전체 대화</span></article>
-      <article><strong>${data.finishedConversations}</strong><span>피드백 완료</span></article>
+      <section class="admin-section">
+        <h3>개요</h3>
+        <div class="admin-grid">
+          <article><strong>${summary.users}</strong><span>가입 사용자</span></article>
+          <article><strong>${summary.completedProfiles}</strong><span>프로필 완료</span></article>
+          <article><strong>${summary.conversations}</strong><span>전체 훈련</span></article>
+          <article><strong>${summary.finishedConversations}</strong><span>완료 훈련</span></article>
+          <article><strong>${summary.thisMonthConversations}</strong><span>이번 달 훈련</span></article>
+          <article><strong>${Math.round(summary.estimatedMonthlyCostKrw || 0).toLocaleString("ko-KR")}원</strong><span>이번 달 예상 비용</span></article>
+        </div>
+      </section>
+      <section class="admin-section">
+        <h3>사용량</h3>
+        <div class="usage-panel">
+          <p>대화 시작 ${usage.usage.byType.chat_start || 0}회 · 메시지 ${usage.usage.byType.chat_message || 0}회 · 피드백 ${usage.usage.byType.feedback || 0}회</p>
+          <p>입력 ${usage.usage.monthlyInputTokens.toLocaleString("ko-KR")} tokens · 출력 ${usage.usage.monthlyOutputTokens.toLocaleString("ko-KR")} tokens</p>
+          <p>월 예산 기준 ${Number(cost.monthlyBudgetKrw || 0).toLocaleString("ko-KR")}원</p>
+        </div>
+      </section>
+      <section class="admin-section">
+        <h3>사용자</h3>
+        <div class="admin-table">
+          ${users.users
+            .map(
+              (user) => `
+                <article>
+                  <strong>${escapeHtml(user.profile?.name || user.displayName || user.email)}</strong>
+                  <span>${escapeHtml(user.email || "")}</span>
+                  <span>${escapeHtml(user.profile?.church || "소속 미입력")} · ${escapeHtml(user.profile?.useCase || "용도 미입력")}</span>
+                  <span>훈련 ${user.conversationCount}회 · 완료 ${user.finishedConversationCount}회</span>
+                </article>
+              `
+            )
+            .join("")}
+        </div>
+      </section>
+      <section class="admin-section">
+        <h3>최근 훈련</h3>
+        <div class="admin-table">
+          ${conversations.conversations
+            .map((item) => {
+              const labels = sessionLabels(item.session);
+              return `
+                <article>
+                  <strong>${escapeHtml(item.user?.name || item.user?.email || "사용자")} · ${labels.persona}</strong>
+                  <span>${formatDate(item.createdAt)}</span>
+                  <span>${labels.relationship} · ${labels.setting}</span>
+                  <span>${labels.goal} · 메시지 ${item.messageCount}개</span>
+                </article>
+              `;
+            })
+            .join("")}
+        </div>
+      </section>
+      <section class="admin-section">
+        <h3>운영 설정</h3>
+        <form class="admin-settings-form" id="adminSettingsForm">
+          <label class="field"><span>후원 제목</span><input name="title" value="${escapeHtml(donation.title || "후원")}" /></label>
+          <label class="field"><span>후원 안내</span><textarea name="body" rows="4">${escapeHtml(donation.body || "")}</textarea></label>
+          <label class="field"><span>후원 계좌/링크</span><input name="account" value="${escapeHtml(donation.account || "")}" placeholder="나중에 입력" /></label>
+          <label class="field"><span>원/달러 환율</span><input name="usdToKrw" type="number" value="${Number(cost.usdToKrw || 1380)}" /></label>
+          <label class="field"><span>월 예산 기준</span><input name="monthlyBudgetKrw" type="number" value="${Number(cost.monthlyBudgetKrw || 0)}" /></label>
+          <button class="primary-button" type="submit">운영 설정 저장</button>
+          <p class="form-error" id="adminSettingsStatus" role="alert"></p>
+        </form>
+      </section>
     `;
+    bindAdminEvents();
   } catch (error) {
     els.adminPanel.innerHTML = `<p class="form-error">${error.message}</p>`;
   }
+}
+
+function bindAdminEvents() {
+  const form = document.querySelector("#adminSettingsForm");
+  if (!form) return;
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const status = document.querySelector("#adminSettingsStatus");
+    status.textContent = "";
+    try {
+      const data = await fetch("/api/admin/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          settings: {
+            donation: {
+              title: form.elements.title.value,
+              body: form.elements.body.value,
+              account: form.elements.account.value,
+              enabled: true
+            },
+            cost: {
+              usdToKrw: Number(form.elements.usdToKrw.value || 1380),
+              monthlyBudgetKrw: Number(form.elements.monthlyBudgetKrw.value || 0)
+            }
+          }
+        })
+      }).then((response) => response.json());
+      state.appSettings = data.settings;
+      status.textContent = "저장했습니다.";
+      renderDonationPanel();
+    } catch (error) {
+      status.textContent = error.message;
+    }
+  });
 }
 
 async function shareFeedback() {
@@ -845,8 +1146,17 @@ async function loadAuth() {
   if (state.auth.user && !state.auth.user.profileComplete) fillProfileForm();
 }
 
+async function loadAppSettings() {
+  try {
+    const data = await getJson("/api/settings");
+    state.appSettings = data.settings || {};
+  } catch {
+    state.appSettings = {};
+  }
+}
+
 async function init() {
-  const [personaResponse] = await Promise.all([fetch("/data/personas.json"), loadAuth()]);
+  const [personaResponse] = await Promise.all([fetch("/data/personas.json"), loadAuth(), loadAppSettings()]);
   state.personas = await personaResponse.json();
   state.selectedPersonaId = state.personas[0]?.id;
   if (state.currentScreen === "home" && state.auth.user && !state.auth.user.profileComplete) {
@@ -867,7 +1177,15 @@ els.messageInput.addEventListener("keydown", (event) => {
   void submitMessage();
 });
 els.messageInput.addEventListener("focus", () => {
+  state.inputFocused = true;
+  updateViewportHeight();
   requestAnimationFrame(scrollMessagesToBottom);
+});
+els.messageInput.addEventListener("blur", () => {
+  setTimeout(() => {
+    state.inputFocused = false;
+    updateViewportHeight();
+  }, 80);
 });
 els.devLoginButton.addEventListener("click", devLogin);
 els.logoutButton.addEventListener("click", logout);

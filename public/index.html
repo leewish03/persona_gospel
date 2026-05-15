@@ -55,12 +55,12 @@
             <span>상황</span>
             <select id="setting">
               <option value="" selected disabled>선택하세요</option>
-              <option value="cafe_catchup">카페에서 오랜만에 근황을 나누는 중</option>
+              <option value="cafe_catchup">카페에서 대화를 나누는 중</option>
               <option value="meal_after_group">식사/모임 후 둘만 남아 이야기하는 중</option>
               <option value="walk_after_work">퇴근길에 함께 걸어가는 중</option>
               <option value="late_night_dm">밤에 카톡/DM으로 진지한 이야기가 이어지는 중</option>
               <option value="campus_or_office_break">학교/직장 쉬는 시간에 잠깐 마주 앉은 중</option>
-              <option value="concern_shared">상대가 먼저 고민을 털어놓은 직후</option>
+              <option value="concern_shared">페르소나가 고민을 털어놓은 직후</option>
               <option value="faith_topic_arose">신앙/교회 이야기가 자연스럽게 언급된 직후</option>
             </select>
           </label>
@@ -146,17 +146,14 @@
         <div class="history-list" id="historyList"></div>
       </section>
 
+      <section class="screen" id="screen-history-detail" data-screen="historyDetail">
+        <div class="history-detail" id="historyDetailPanel"></div>
+      </section>
+
       <section class="screen" id="screen-settings" data-screen="settings">
         <div class="settings-stack">
           <article class="settings-card" id="accountPanel"></article>
-          <article class="settings-card">
-            <h3>후원</h3>
-            <p>이 앱의 AI 호출 비용은 운영자가 부담합니다. 지속 운영을 돕고 싶다면 아래 안내를 통해 후원할 수 있습니다.</p>
-            <div class="donation-box">
-              <strong>후원 계좌</strong>
-              <span>추후 입력</span>
-            </div>
-          </article>
+          <article class="settings-card" id="donationPanel"></article>
           <button class="secondary-button full-width" id="logoutButton" type="button">로그아웃</button>
         </div>
       </section>
