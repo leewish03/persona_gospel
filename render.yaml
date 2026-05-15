@@ -24,7 +24,7 @@ services:
       - key: USD_TO_KRW
         value: "1380"
       - key: SUPABASE_URL
-        sync: false
+        value: https://wyqpcldqlyrqbppjdhhp.supabase.co
       - key: SUPABASE_ANON_KEY
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY

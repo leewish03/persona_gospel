@@ -65,3 +65,4 @@ create index if not exists idx_conversations_status on public.conversations(stat
 create index if not exists idx_messages_conversation_order on public.conversation_messages(conversation_id, sort_order);
 create index if not exists idx_usage_events_created on public.usage_events(created_at desc);
 create index if not exists idx_usage_events_user_created on public.usage_events(user_id, created_at desc);
+create index if not exists idx_usage_events_conversation on public.usage_events(conversation_id);
