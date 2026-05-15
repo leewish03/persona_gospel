@@ -699,8 +699,19 @@ textarea:focus {
   font-weight: 900;
 }
 
-.feedback-panel ul {
+.feedback-panel ul,
+.feedback-panel ol {
   padding-left: 20px;
+}
+
+.feedback-panel li {
+  margin-bottom: 8px;
+  color: var(--muted);
+  line-height: 1.58;
+}
+
+.feedback-panel strong {
+  color: var(--ink);
 }
 
 .auth-card,

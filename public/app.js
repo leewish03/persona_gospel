@@ -278,7 +278,7 @@ function renderChrome() {
   els.resetButton.style.visibility = state.currentScreen === "home" ? "hidden" : "visible";
 
   els.chatForm.hidden = state.currentScreen !== "chat";
-  const actionless = ["login", "history", "settings", "admin"].includes(state.currentScreen);
+  const actionless = ["login", "history", "historyDetail", "settings", "admin"].includes(state.currentScreen);
   els.bottomBar.hidden =
     actionless ||
     (state.currentScreen === "chat" && state.sessionStarted && (state.messages.length < 2 || state.keyboardOpen));
@@ -644,21 +644,59 @@ async function submitMessage() {
 }
 
 function markdownToHtml(markdown) {
-  return markdown
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/^## (.*)$/gm, "<h2>$1</h2>")
-    .replace(/^- (.*)$/gm, "<li>$1</li>")
-    .replace(/(<li>.*<\/li>)/gs, "<ul>$1</ul>")
-    .replace(/\n{2,}/g, "</p><p>")
-    .replace(/\n/g, "<br>")
-    .replace(/^/, "<p>")
-    .replace(/$/, "</p>")
-    .replace(/<p><h2>/g, "<h2>")
-    .replace(/<\/h2><\/p>/g, "</h2>")
-    .replace(/<p><ul>/g, "<ul>")
-    .replace(/<\/ul><\/p>/g, "</ul>");
+  const lines = String(markdown || "").split(/\r?\n/);
+  const html = [];
+  let paragraph = [];
+  let listType = "";
+
+  const renderInline = (value) =>
+    escapeHtml(value).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/\*(.+?)\*/g, "<em>$1</em>");
+  const flushParagraph = () => {
+    if (!paragraph.length) return;
+    html.push(`<p>${paragraph.map(renderInline).join("<br>")}</p>`);
+    paragraph = [];
+  };
+  const closeList = () => {
+    if (!listType) return;
+    html.push(`</${listType}>`);
+    listType = "";
+  };
+  const openList = (type) => {
+    flushParagraph();
+    if (listType === type) return;
+    closeList();
+    listType = type;
+    html.push(`<${type}>`);
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    const heading = /^(#{2,3})\s+(.+)$/.exec(line);
+    const bullet = /^[-*]\s+(.+)$/.exec(line);
+    const ordered = /^\d+[.)]\s+(.+)$/.exec(line);
+
+    if (!line) {
+      flushParagraph();
+      closeList();
+    } else if (heading) {
+      flushParagraph();
+      closeList();
+      html.push(`<h2>${renderInline(heading[2])}</h2>`);
+    } else if (bullet) {
+      openList("ul");
+      html.push(`<li>${renderInline(bullet[1])}</li>`);
+    } else if (ordered) {
+      openList("ol");
+      html.push(`<li>${renderInline(ordered[1])}</li>`);
+    } else {
+      closeList();
+      paragraph.push(line);
+    }
+  }
+
+  flushParagraph();
+  closeList();
+  return html.join("");
 }
 
 function escapeHtml(value = "") {

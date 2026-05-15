@@ -1,10 +1,12 @@
 import { createServer } from "node:http";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 
 const rootDir = fileURLToPath(new URL(".", import.meta.url));
+loadLocalEnv(join(rootDir, ".env"));
 const publicDir = join(rootDir, "public");
 const isProduction = globalThis.process?.env?.NODE_ENV === "production";
 const port = Number(globalThis.process?.env?.PORT || (isProduction ? 10000 : 4173));
@@ -37,6 +39,22 @@ const feedbackInputPrice = Number(globalThis.process?.env?.OPENAI_FEEDBACK_INPUT
 const feedbackOutputPrice = Number(globalThis.process?.env?.OPENAI_FEEDBACK_OUTPUT_USD_PER_1M || 8);
 const sessions = new Map();
 const oauthStates = new Map();
+
+function loadLocalEnv(path) {
+  if (globalThis.process?.env?.NODE_ENV === "production" || !existsSync(path)) return;
+  for (const rawLine of readFileSync(path, "utf8").split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const separatorIndex = line.indexOf("=");
+    if (separatorIndex < 1) continue;
+    const key = line.slice(0, separatorIndex).trim();
+    let value = line.slice(separatorIndex + 1).trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    if (globalThis.process.env[key] === undefined) globalThis.process.env[key] = value;
+  }
+}
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
