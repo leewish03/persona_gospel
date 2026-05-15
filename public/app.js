@@ -890,9 +890,11 @@ async function loadAdmin() {
       <section class="admin-section">
         <h3>사용자</h3>
         <div class="admin-table">
-          ${users.users
-            .map(
-              (user) => `
+          ${
+            users.users.length
+              ? users.users
+                  .map(
+                    (user) => `
                 <article>
                   <strong>${escapeHtml(user.profile?.name || user.displayName || user.email)}</strong>
                   <span>${escapeHtml(user.email || "")}</span>
@@ -900,17 +902,21 @@ async function loadAdmin() {
                   <span>훈련 ${user.conversationCount}회 · 완료 ${user.finishedConversationCount}회</span>
                 </article>
               `
-            )
-            .join("")}
+                  )
+                  .join("")
+              : `<p class="admin-empty">아직 등록된 사용자가 없습니다.</p>`
+          }
         </div>
       </section>
       <section class="admin-section">
         <h3>최근 훈련</h3>
         <div class="admin-table">
-          ${conversations.conversations
-            .map((item) => {
-              const labels = sessionLabels(item.session);
-              return `
+          ${
+            conversations.conversations.length
+              ? conversations.conversations
+                  .map((item) => {
+                    const labels = sessionLabels(item.session);
+                    return `
                 <article>
                   <strong>${escapeHtml(item.user?.name || item.user?.email || "사용자")} · ${labels.persona}</strong>
                   <span>${formatDate(item.createdAt)}</span>
@@ -918,8 +924,10 @@ async function loadAdmin() {
                   <span>${labels.goal} · 메시지 ${item.messageCount}개</span>
                 </article>
               `;
-            })
-            .join("")}
+                  })
+                  .join("")
+              : `<p class="admin-empty">아직 저장된 훈련 기록이 없습니다.</p>`
+          }
         </div>
       </section>
       <section class="admin-section">
@@ -931,7 +939,7 @@ async function loadAdmin() {
           <label class="field"><span>원/달러 환율</span><input name="usdToKrw" type="number" value="${Number(cost.usdToKrw || 1380)}" /></label>
           <label class="field"><span>월 예산 기준</span><input name="monthlyBudgetKrw" type="number" value="${Number(cost.monthlyBudgetKrw || 0)}" /></label>
           <button class="primary-button" type="submit">운영 설정 저장</button>
-          <p class="form-error" id="adminSettingsStatus" role="alert"></p>
+          <p class="form-status" id="adminSettingsStatus" role="status"></p>
         </form>
       </section>
     `;
@@ -948,8 +956,9 @@ function bindAdminEvents() {
     event.preventDefault();
     const status = document.querySelector("#adminSettingsStatus");
     status.textContent = "";
+    status.classList.remove("is-error");
     try {
-      const data = await fetch("/api/admin/settings", {
+      const response = await fetch("/api/admin/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -966,11 +975,14 @@ function bindAdminEvents() {
             }
           }
         })
-      }).then((response) => response.json());
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "운영 설정을 저장하지 못했습니다.");
       state.appSettings = data.settings;
       status.textContent = "저장했습니다.";
       renderDonationPanel();
     } catch (error) {
+      status.classList.add("is-error");
       status.textContent = error.message;
     }
   });

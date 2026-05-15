@@ -110,13 +110,13 @@
             <input id="profileAge" type="number" inputmode="numeric" min="10" max="99" placeholder="예: 24" />
           </label>
 
-          <label class="field">
+          <div class="field">
             <span>성별</span>
             <div class="segmented-control" role="radiogroup" aria-label="성별">
               <button type="button" data-profile-gender="남성" aria-pressed="false">남성</button>
               <button type="button" data-profile-gender="여성" aria-pressed="false">여성</button>
             </div>
-          </label>
+          </div>
 
           <label class="field">
             <span>소속 교회</span>
@@ -159,7 +159,7 @@
       </section>
 
       <section class="screen" id="screen-admin" data-screen="admin">
-        <div class="admin-grid" id="adminPanel"></div>
+        <div class="admin-panel" id="adminPanel"></div>
       </section>
 
       <form id="chatForm" class="composer" hidden>

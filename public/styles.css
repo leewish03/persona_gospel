@@ -478,13 +478,25 @@ textarea:focus {
   line-height: 1.55;
 }
 
-.form-error {
+.form-error,
+.form-status {
   min-height: 1.4em;
   margin: 0;
-  color: var(--berry);
   font-size: 0.88rem;
   font-weight: 900;
   line-height: 1.45;
+}
+
+.form-error {
+  color: var(--berry);
+}
+
+.form-status {
+  color: var(--teal-deep);
+}
+
+.form-status.is-error {
+  color: var(--berry);
 }
 
 .persona-summary,
@@ -693,8 +705,7 @@ textarea:focus {
 
 .auth-card,
 .settings-card,
-.history-item,
-.admin-grid article {
+.history-item {
   padding: 16px;
   border: 1px solid var(--line);
   border-radius: 14px;
@@ -745,16 +756,15 @@ textarea:focus {
 }
 
 .settings-stack,
-.history-list {
+.history-list,
+.admin-panel {
   display: grid;
   gap: 12px;
 }
 
 .history-summary-panel,
 .filter-bar,
-.history-detail-card,
-.admin-section,
-.usage-panel {
+.history-detail-card {
   display: grid;
   gap: 10px;
   padding: 14px;
@@ -916,16 +926,44 @@ textarea:focus {
 }
 
 .admin-section {
-  margin-bottom: 12px;
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 8px 20px rgba(23, 33, 31, 0.06);
 }
 
 .admin-section h3 {
   margin-bottom: 0;
 }
 
+.admin-grid article,
+.usage-panel,
 .admin-table {
   display: grid;
+}
+
+.admin-grid article,
+.usage-panel {
   gap: 8px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fffdfa;
+}
+
+.usage-panel {
+  line-height: 1.52;
+}
+
+.usage-panel p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.52;
 }
 
 .admin-table article {
@@ -935,6 +973,17 @@ textarea:focus {
   border: 1px solid var(--line);
   border-radius: 12px;
   background: #fffdfa;
+}
+
+.admin-empty {
+  margin: 0;
+  padding: 14px;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  color: var(--muted);
+  background: #fffdfa;
+  font-size: 0.9rem;
+  line-height: 1.5;
 }
 
 .admin-table strong,
@@ -955,7 +1004,6 @@ textarea:focus {
 }
 
 .admin-grid article {
-  display: grid;
   gap: 6px;
 }
 
