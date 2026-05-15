@@ -13,7 +13,8 @@ const state = {
   sessionStarted: false,
   isBusy: false,
   historyLoaded: false,
-  reviewScrolled: false
+  reviewScrolled: false,
+  keyboardOpen: false
 };
 
 const els = {
@@ -184,7 +185,12 @@ function goTo(screen) {
 
 function updateViewportHeight() {
   const height = window.visualViewport?.height || window.innerHeight;
+  const keyboardOpen = Boolean(window.visualViewport && window.innerHeight - window.visualViewport.height > 140);
   document.documentElement.style.setProperty("--app-height", `${height}px`);
+  if (state.keyboardOpen !== keyboardOpen) {
+    state.keyboardOpen = keyboardOpen;
+    renderChrome();
+  }
   if (state.currentScreen === "chat") requestAnimationFrame(scrollMessagesToBottom);
 }
 
@@ -263,7 +269,11 @@ function renderChrome() {
     (state.currentScreen === "feedback" && !state.latestFeedbackText) ||
     (state.currentScreen === "review" && !state.reviewScrolled);
 
-  const showTabs = hasUser() && profileComplete() && !["login", "profile"].includes(state.currentScreen);
+  const showTabs =
+    hasUser() &&
+    profileComplete() &&
+    !["login", "profile"].includes(state.currentScreen) &&
+    !(state.currentScreen === "chat" && state.keyboardOpen);
   els.tabBar.hidden = !showTabs;
   for (const button of els.tabBar.querySelectorAll("button")) {
     const tab = button.dataset.tab;
@@ -351,6 +361,7 @@ function renderContextImage() {
 
 function renderMessages() {
   els.messageList.innerHTML = "";
+  els.messageList.append(els.chatMeta);
   const persona = currentPersona();
   for (const message of state.messages) {
     const node = els.messageTemplate.content.firstElementChild.cloneNode(true);
