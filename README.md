@@ -23,7 +23,9 @@ ENABLE_DEV_LOGIN=false
 APP_BASE_URL=https://your-service.onrender.com
 OPENAI_API_KEY=...
 OPENAI_CHAT_MODEL=gpt-5.4-mini
+OPENAI_CHAT_REASONING_EFFORT=high
 OPENAI_FEEDBACK_MODEL=gpt-5.4
+OPENAI_FEEDBACK_REASONING_EFFORT=medium
 ```
 
 Google/Kakao 로그인을 운영에서 쓰려면 OAuth 앱을 만들고 callback URL을 등록해야 합니다.

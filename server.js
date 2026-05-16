@@ -16,11 +16,11 @@ const appBaseUrl = globalThis.process?.env?.APP_BASE_URL || globalThis.process?.
 const appOpenAIKey = globalThis.process?.env?.OPENAI_API_KEY || "";
 const appAnthropicKey = globalThis.process?.env?.ANTHROPIC_API_KEY || globalThis.process?.env?.CLAUDE_API_KEY || "";
 const appChatModel =
-  globalThis.process?.env?.OPENAI_CHAT_MODEL || globalThis.process?.env?.OPENAI_MODEL || "chat-latest";
+  globalThis.process?.env?.OPENAI_CHAT_MODEL || globalThis.process?.env?.OPENAI_MODEL || "gpt-5.4-mini";
 const appFeedbackModel =
   globalThis.process?.env?.OPENAI_FEEDBACK_MODEL || globalThis.process?.env?.OPENAI_MODEL || "gpt-5.4";
 const appChatReasoningEffort =
-  globalThis.process?.env?.OPENAI_CHAT_REASONING_EFFORT || globalThis.process?.env?.OPENAI_REASONING_EFFORT || "";
+  globalThis.process?.env?.OPENAI_CHAT_REASONING_EFFORT || globalThis.process?.env?.OPENAI_REASONING_EFFORT || "high";
 const appFeedbackReasoningEffort =
   globalThis.process?.env?.OPENAI_FEEDBACK_REASONING_EFFORT || globalThis.process?.env?.OPENAI_REASONING_EFFORT || "medium";
 const devAuthEnabled = globalThis.process?.env?.ENABLE_DEV_LOGIN === "true" || !isProduction;
@@ -1065,6 +1065,202 @@ function formatMessages(messages = []) {
     .join("\n");
 }
 
+function lastUserMessage(messages = []) {
+  return [...messages].reverse().find((message) => message.role === "user") || null;
+}
+
+function recentAssistantMessages(messages = [], count = 3) {
+  return messages.filter((message) => message.role === "assistant").slice(-count);
+}
+
+const userMovePatterns = [
+  { userMove: "off_topic", pattern: /프롬프트|AI|시스템|앱|코딩|검색|사귀|고백|데이트|스킨십/i },
+  { userMove: "pressure", pattern: /그냥 믿|믿어야|교회 나와|회개해야|안 믿으면|무조건|당장|반드시/ },
+  { userMove: "cross_resurrection", pattern: /십자가|부활|예수.*죽|살아나|대속|죽으셨|다시 사/ },
+  { userMove: "sin_repentance", pattern: /죄|회개|잘못|하나님 앞|기준|거룩/ },
+  { userMove: "faith_salvation", pattern: /믿음|구원|영생|은혜|행위|선행|믿는/ },
+  { userMove: "god_love", pattern: /하나님.*사랑|사랑하|존재.*가치|성과.*아니|있는 그대로/ },
+  { userMove: "personal_witness", pattern: /나는|나도|내가.*겪|내 경험|간증|나 같은 경우/ },
+  { userMove: "empathy", pattern: /힘들었겠다|그랬구나|이해돼|그럴 수 있|듣고 있어|속상했겠다|외로웠겠다/ },
+  { userMove: "question", pattern: /\?|어떻게|왜|무슨|궁금|뭐가|어떤/ }
+];
+
+function detectUserMove(message = {}) {
+  const content = String(message.content || "").trim();
+  if (!content) return { userMove: "smalltalk", evidence: ["empty"] };
+  for (const entry of userMovePatterns) {
+    const match = content.match(entry.pattern);
+    if (match) return { userMove: entry.userMove, evidence: [match[0]] };
+  }
+  if (/안녕|요즘|근황|뭐해|밥|커피|괜찮/.test(content) || content.length < 18) {
+    return { userMove: "smalltalk", evidence: ["short-or-smalltalk"] };
+  }
+  return { userMove: "listening", evidence: ["fallback"] };
+}
+
+function selectPasEntries(persona, detectedMove, limit = 3) {
+  const pasMap = persona.roleplayTemplate?.pasMap || [];
+  if (!pasMap.length) return [];
+  const userMove = detectedMove?.userMove || "listening";
+  const fallbackMoves = {
+    question: ["question", "faith_salvation", "god_love"],
+    listening: ["listening", "empathy", "smalltalk"],
+    empathy: ["empathy", "listening"],
+    pressure: ["pressure"],
+    off_topic: ["off_topic", "pressure"],
+    closing: ["closing"],
+    smalltalk: ["smalltalk"],
+    personal_witness: ["personal_witness", "listening", "god_love"]
+  };
+  const moves = fallbackMoves[userMove] || [userMove, "smalltalk", "closing"];
+  const selected = [];
+  for (const move of moves) {
+    for (const entry of pasMap) {
+      if (entry.userMove === move && !selected.includes(entry)) selected.push(entry);
+      if (selected.length >= limit) return selected;
+    }
+  }
+  return selected.length ? selected : pasMap.slice(0, limit);
+}
+
+const concernKeywords = [
+  ["취업 불안", /취업|지원서|면접|회사|떨어|합격/],
+  ["비교와 인정 욕구", /비교|인정|가치|성과|스펙/],
+  ["교회 상처", /교회|상처|위선|강요|실망/],
+  ["성과와 통제", /성과|통제|성공|실패|쉬어도|바쁘/],
+  ["사랑과 외로움", /사랑|외롭|버림|관계|상처받/],
+  ["선행과 도덕 기준", /착하게|선행|양심|좋은 사람|도덕/],
+  ["근거와 검증", /근거|증거|검증|논리|역사/]
+];
+
+const gospelKeywords = [
+  ["하나님 사랑", /하나님.*사랑|사랑하|있는 그대로/],
+  ["죄와 회개", /죄|회개|하나님 앞|기준|거룩/],
+  ["십자가와 부활", /십자가|부활|대속|예수.*죽|다시 사/],
+  ["믿음과 구원", /믿음|구원|은혜|영생|행위/]
+];
+
+function labelsFromKeywords(text, entries) {
+  return entries.filter(([, pattern]) => pattern.test(text)).map(([label]) => label);
+}
+
+function repeatedQuestionRisk(messages = []) {
+  const recentText = recentAssistantMessages(messages, 3)
+    .map((message) => message.content || "")
+    .join("\n");
+  const risks = [];
+  for (const pattern of ["어떻게 닿", "어떻게 연결", "어떻게 생각", "뭐가 다른", "왜"]) {
+    const count = (recentText.match(new RegExp(pattern, "g")) || []).length;
+    if (count >= 2) risks.push(`'${pattern}' 질문 구조 반복`);
+  }
+  for (const pattern of ["취업", "불안", "사랑", "죄", "교회", "선행", "부활"]) {
+    const count = (recentText.match(new RegExp(pattern, "g")) || []).length;
+    if (count >= 3) risks.push(`'${pattern}' 소재 반복`);
+  }
+  return risks.length ? risks.join(", ") : "최근 질문 구조를 그대로 반복하지 말 것";
+}
+
+function conversationStateHints(messages = [], persona = {}) {
+  const conversationText = messages.map((message) => message.content || "").join("\n");
+  const userText = messages
+    .filter((message) => message.role === "user")
+    .map((message) => message.content || "")
+    .join("\n");
+  const concerns = labelsFromKeywords(conversationText, concernKeywords);
+  const gospel = labelsFromKeywords(userText, gospelKeywords);
+  const remainingBarrier =
+    persona.roleplayTemplate?.lateSessionTension?.coreQuestion ||
+    persona.gospelBarriers?.[0] ||
+    "페르소나의 핵심 복음 장벽을 유지한다.";
+  const nextPressure =
+    persona.roleplayTemplate?.lateSessionTension?.healthyMovement ||
+    "사용자의 접근에 반응하되 한 번의 대화에서 결론을 닫지 않는다.";
+  return [
+    "대화 상태 요약:",
+    `- 이미 드러난 페르소나 고민: ${concerns.length ? concerns.join(", ") : "아직 명확히 드러나지 않음"}`,
+    `- 이미 사용자가 다룬 복음 요소: ${gospel.length ? gospel.join(", ") : "아직 직접 다루지 않음"}`,
+    `- 페르소나가 아직 받아들이지 못한 지점: ${remainingBarrier}`,
+    `- 최근 반복 위험: ${repeatedQuestionRisk(messages)}`,
+    `- 다음으로 자연스러운 압력: ${nextPressure}`
+  ].join("\n");
+}
+
+function settingContinuityHint(session = {}, messages = []) {
+  const patterns = {
+    cafe_catchup: /카페|커피|음료|앉아|테이블/,
+    meal_after_group: /밥|식사|모임|끝나고|둘만/,
+    walk_after_work: /퇴근|걷|집에 가|저녁|피곤/,
+    late_night_dm: /밤|늦|톡|DM|답장/,
+    campus_or_office_break: /쉬는 시간|잠깐|학교|직장|사무실/,
+    concern_shared: /아까 말한|털어놓|힘들다고|고민|말했/,
+    faith_topic_arose: /교회|신앙|그 얘기|아까 말한/
+  };
+  const surfaceHints = {
+    cafe_catchup: "카페, 커피, 음료, 테이블 같은 장면 단서",
+    meal_after_group: "밥 먹고 난 뒤, 모임 끝난 뒤, 둘만 남은 분위기",
+    walk_after_work: "퇴근길, 걷는 중, 저녁 공기, 피곤함",
+    late_night_dm: "밤 톡, 늦은 답장, 화면 너머의 조심스러운 말투",
+    campus_or_office_break: "쉬는 시간, 잠깐 마주 앉은 상황, 주변 사람들 사이의 조심스러움",
+    concern_shared: "아까 말한 고민, 방금 털어놓은 부담, 이미 꺼낸 힘든 이야기",
+    faith_topic_arose: "아까 나온 신앙/교회 이야기, 그 주제를 다시 꺼내는 부담감"
+  };
+  const pattern = patterns[session.setting];
+  if (!pattern) return "장소/상황 단서를 과하게 반복하지 말고 관계 거리감만 유지한다.";
+  const assistant = recentAssistantMessages(messages, 4);
+  const recentText = assistant.map((message) => message.content || "").join("\n");
+  if (pattern.test(recentText)) return "최근 응답에 장면 단서가 이미 있으므로 이번 턴에는 억지로 장소를 언급하지 않아도 된다.";
+  if (messages.length >= 6) {
+    if (session.setting === "concern_shared") {
+      return "최근 응답에서 '고민을 막 털어놓은 직후' 상황이 흐려졌다. 이번 턴에는 '아까 말한 것처럼', '방금 얘기한 그 지점', '그 고민이 아직' 같은 표현 중 하나로 이미 꺼낸 고민의 연속성을 자연스럽게 되살린다.";
+    }
+    return `최근 응답에서 시작 상황이 흐려졌다. 이번 턴에 ${surfaceHints[session.setting] || "현재 상황 단서"}를 한 단어 정도만 자연스럽게 되살린다.`;
+  }
+  return "시작 장면을 기억하되, 첫 응답 이후에는 필요한 때만 짧게 반영한다.";
+}
+
+function questionVarietyHint(messages = []) {
+  const recentText = recentAssistantMessages(messages, 4)
+    .map((message) => message.content || "")
+    .join("\n");
+  const counts = {
+    how: (recentText.match(/어떻게/g) || []).length,
+    what: (recentText.match(/뭐가|무엇|어떤/g) || []).length,
+    why: (recentText.match(/왜/g) || []).length
+  };
+  if (counts.how >= 1) {
+    return "최근 '어떻게'가 이미 나왔다. 이번 응답에는 '어떻게'를 쓰지 말고 질문 없이 유보 진술로 끝내거나, 꼭 물어야 한다면 '어느 지점이 제일 걸려?'처럼 다른 구조를 쓴다.";
+  }
+  if (counts.what >= 1 || counts.why >= 1) {
+    return "최근 '왜/뭐/어떤' 질문어가 이미 나왔다. 이번 응답은 같은 질문어를 쓰지 말고, 질문보다 페르소나 자신의 남은 장벽을 진술하는 방식으로 마무리한다.";
+  }
+  return "최근 질문 구조와 다른 문장 리듬을 사용한다.";
+}
+
+function formatPasEntry(entry, index) {
+  return [
+    `${index + 1}. [${entry.id || "pas"}] userMove=${entry.userMove || "unknown"}`,
+    `   trigger: ${entry.trigger || "없음"}`,
+    `   purpose: ${entry.purpose || "없음"}`,
+    `   action: ${entry.action || "없음"}`,
+    `   pressure: ${entry.pressure || "없음"}`,
+    `   avoid: ${entry.avoid || "없음"}`,
+    `   example: ${entry.example || "없음"}`
+  ].join("\n");
+}
+
+function formatPasExecutionPlan(persona, messages = []) {
+  const detected = detectUserMove(lastUserMessage(messages) || {});
+  const candidates = selectPasEntries(persona, detected, 3);
+  return [
+    "이번 턴 페르소나 실행 계획:",
+    `- 감지된 사용자 행동: ${detected.userMove}`,
+    `- 감지 근거: ${detected.evidence.join(", ") || "없음"}`,
+    "- 우선 참고할 PAS 후보:",
+    candidates.length ? candidates.map(formatPasEntry).join("\n") : "  없음",
+    "- 주의: 위 후보가 대화 기록과 맞지 않으면 더 자연스러운 PAS를 내부적으로 선택하되, 페르소나 장벽은 유지한다."
+  ].join("\n");
+}
+
 function conversationPhase(messages = []) {
   const userTurns = messages.filter((message) => message.role === "user").length;
   const conversationText = messages.map((message) => message.content || "").join("\n");
@@ -1114,6 +1310,50 @@ function formatPersonaTemplate(persona) {
   return JSON.stringify(persona.roleplayTemplate, null, 2);
 }
 
+function formatRuntimeCard(persona) {
+  const template = persona.roleplayTemplate || {};
+  const coreStack = template.coreStack || {};
+  const pasMap = (template.pasMap || []).slice(0, 10);
+  const fewShot = template.fewShotResponses || {};
+  const goodShots = (fewShot.good || []).slice(0, 2);
+  const badShots = (fewShot.bad || []).slice(0, 2);
+  const lines = [
+    "페르소나 실행 카드:",
+    `- 핵심 성향: ${coreStack.coreTrait || persona.shortDescription || "없음"}`,
+    `- 표현 방식: ${coreStack.modifier || template.speechStyle?.tone || "없음"}`,
+    `- 인간적 불완전성: ${coreStack.humanFlaw || "없음"}`,
+    `- 대화 흐름: 초반=${template.sessionArc?.opening || "없음"} / 중반=${template.sessionArc?.middle || "없음"} / 마무리=${template.sessionArc?.closing || "없음"}`,
+    `- 말투: ${template.speechStyle?.tone || "없음"} / ${template.speechStyle?.sentenceShape || "없음"}`,
+    `- 후반 핵심 장벽: ${template.lateSessionTension?.coreQuestion || "없음"}`,
+    `- 건강한 변화: ${template.lateSessionTension?.healthyMovement || "없음"}`,
+    "",
+    "허용된 불완전성:",
+    ...(template.imperfectionPattern?.length ? template.imperfectionPattern.map((item) => `- ${item}`) : ["- 없음"]),
+    "",
+    "피해야 할 실패 패턴:",
+    ...(template.badResponsePatterns?.length ? template.badResponsePatterns.map((item) => `- ${item}`) : ["- 없음"]),
+    "",
+    "복음 반응 지도:",
+    ...(template.gospelReactionMap
+      ? Object.entries(template.gospelReactionMap).map(([key, value]) => `- ${key}: ${value}`)
+      : ["- 없음"]),
+    "",
+    "PAS 후보:",
+    ...(pasMap.length ? pasMap.map(formatPasEntry) : ["없음"]),
+    "",
+    "Few-shot Good:",
+    ...(goodShots.length
+      ? goodShots.map((shot) => `- 사용자: ${shot.user}\n  페르소나: ${shot.assistant}\n  이유: ${shot.why || "없음"}`)
+      : ["- 없음"]),
+    "",
+    "Few-shot Bad:",
+    ...(badShots.length
+      ? badShots.map((shot) => `- 사용자: ${shot.user}\n  페르소나: ${shot.assistant}\n  금지 이유: ${shot.why || "없음"}`)
+      : ["- 없음"])
+  ];
+  return lines.join("\n");
+}
+
 function formatPersonaCard(persona) {
   const { roleplayTemplate, ...personaCard } = persona;
   return JSON.stringify(personaCard, null, 2);
@@ -1144,11 +1384,8 @@ function buildSessionBlock(session, persona) {
     `- 훈련 초점: ${goalLabels[session.goal] || session.goal}`,
     `  목표 반영 지침: ${goalGuidance[session.goal] || "사용자의 선택 목표를 이번 대화의 훈련 초점으로 반영한다."}`,
     "",
-    "선택된 페르소나 카드:",
-    formatPersonaCard(persona),
-    "",
-    "페르소나별 단기 대화 템플릿:",
-    formatPersonaTemplate(persona)
+    "선택된 페르소나 요약:",
+    formatPersonaCard(persona)
   ].join("\n");
 }
 
@@ -1175,12 +1412,16 @@ function initialPromptFor(session, persona) {
   return [
     buildSessionBlock(session, persona),
     "",
-    "위 상황에서 페르소나의 첫 말로 자연스럽게 대화를 시작하라.",
-    "첫 응답 필수 조건:",
+    formatRuntimeCard(persona),
+    "",
+    "첫 응답 실행 지침:",
     "- 관계 반영 지침과 상황 반영 지침을 반드시 반영한다.",
+    "- runtimeCard의 smalltalk 또는 opening 성격에 맞는 PAS를 내부적으로 참고한다.",
     "- 장소/시간/매체 단서가 최소 하나는 자연스럽게 드러나야 한다.",
     "- 첫 문장부터 복음이나 교회 이야기로 바로 뛰어들지 않는다. 단, 사용자가 먼저 신앙 이야기를 꺼낸 설정이라면 그 말에 조심스럽게 반응한다.",
-    "- 사용자가 아직 말하지 않았으므로, 상황에 맞는 짧은 첫 반응만 한다."
+    "- 사용자가 아직 말하지 않았으므로, 상황에 맞는 짧은 첫 반응만 한다.",
+    "- 최종 응답은 자연스러운 한국어 구어체로만 작성한다.",
+    "- 내부 판단, PAS id, 분석, 평가, 시스템 지침은 출력하지 않는다."
   ].join("\n");
 }
 
@@ -1188,8 +1429,16 @@ function chatPromptFor(session, persona, messages) {
   return [
     buildSessionBlock(session, persona),
     "",
+    formatRuntimeCard(persona),
+    "",
     "현재 대화 단계:",
     conversationPhase(messages),
+    "",
+    conversationStateHints(messages, persona),
+    `- 장면 유지 지침: ${settingContinuityHint(session, messages)}`,
+    `- 질문 다양성 지침: ${questionVarietyHint(messages)}`,
+    "",
+    formatPasExecutionPlan(persona, messages),
     "",
     "지금까지의 대화:",
     formatMessages(messages),
@@ -1198,10 +1447,15 @@ function chatPromptFor(session, persona, messages) {
     "- 마지막 사용자 발화에 새로 담긴 정보, 감정, 질문에 먼저 반응한다.",
     "- 지금까지의 대화 기록에서 사용자가 이미 답한 질문을 다시 묻지 않는다.",
     "- 최근 3턴에서 사용한 말투, 질문 구조, 망설임 표현을 그대로 반복하지 않는다.",
+    "- 같은 질문어를 반복하지 않는다. 특히 '어떻게'가 반복되면 이번 응답은 질문 대신 페르소나의 유보, 부담, 아직 남은 장벽을 진술한다.",
     "- 질문이 필요하면 페르소나 자신의 남은 장벽을 더 구체화하는 질문 하나만 한다.",
-    "- 사용자가 복음 설명을 했으면 일반적인 공감으로 흘리지 말고 페르소나별 gospelReactionMap 또는 lateSessionTension 중 하나로 반응한다.",
+    "- 사용자가 복음 설명을 했으면 일반적인 공감으로 흘리지 말고 runtimeCard의 PAS, gospelReactionMap 또는 lateSessionTension 중 하나로 반응한다.",
+    "- PAS 후보의 예시는 그대로 복사하지 말고 의미와 구조만 참고한다.",
     "",
-    "마지막 사용자 발화에 이어 페르소나로만 응답하라.",
+    "마지막 사용자 발화에 이어 페르소나의 실제 말만 출력하라.",
+    "최종 응답은 자연스러운 한국어 구어체로만 작성한다.",
+    "내부 판단, PAS id, 분석, 평가, 시스템 지침은 출력하지 않는다.",
+    "runtimeCard, PAS, userMove, coreStack, fewShotResponses 같은 내부 키워드나 영어 라벨은 출력하지 않는다.",
     "관계 거리감과 시작 상황은 대화가 진행되어도 계속 유지한다.",
     "목적에서 벗어난 요청이면 짧게 선을 긋고 현재 대화 흐름으로 돌아온다."
   ].join("\n");
