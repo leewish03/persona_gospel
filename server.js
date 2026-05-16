@@ -14,12 +14,13 @@ const port = Number(globalThis.process?.env?.PORT || (isProduction ? 10000 : 417
 const host = globalThis.process?.env?.HOST || (isProduction ? "0.0.0.0" : "127.0.0.1");
 const appBaseUrl = globalThis.process?.env?.APP_BASE_URL || globalThis.process?.env?.RENDER_EXTERNAL_URL || `http://localhost:${port}`;
 const appOpenAIKey = globalThis.process?.env?.OPENAI_API_KEY || "";
+const appAnthropicKey = globalThis.process?.env?.ANTHROPIC_API_KEY || globalThis.process?.env?.CLAUDE_API_KEY || "";
 const appChatModel =
-  globalThis.process?.env?.OPENAI_CHAT_MODEL || globalThis.process?.env?.OPENAI_MODEL || "gpt-5.4-mini";
+  globalThis.process?.env?.OPENAI_CHAT_MODEL || globalThis.process?.env?.OPENAI_MODEL || "chat-latest";
 const appFeedbackModel =
   globalThis.process?.env?.OPENAI_FEEDBACK_MODEL || globalThis.process?.env?.OPENAI_MODEL || "gpt-5.4";
 const appChatReasoningEffort =
-  globalThis.process?.env?.OPENAI_CHAT_REASONING_EFFORT || globalThis.process?.env?.OPENAI_REASONING_EFFORT || "high";
+  globalThis.process?.env?.OPENAI_CHAT_REASONING_EFFORT || globalThis.process?.env?.OPENAI_REASONING_EFFORT || "";
 const appFeedbackReasoningEffort =
   globalThis.process?.env?.OPENAI_FEEDBACK_REASONING_EFFORT || globalThis.process?.env?.OPENAI_REASONING_EFFORT || "medium";
 const devAuthEnabled = globalThis.process?.env?.ENABLE_DEV_LOGIN === "true" || !isProduction;
@@ -87,6 +88,30 @@ const defaultSettings = {
   cost: {
     usdToKrw,
     monthlyBudgetKrw: 0
+  },
+  ai: {
+    chat: {
+      provider: "openai",
+      model: appChatModel,
+      maxOutputTokens: 1400,
+      temperature: "",
+      topP: "",
+      reasoningEffort: appChatReasoningEffort || "none",
+      thinkingType: "disabled",
+      thinkingBudgetTokens: 0,
+      thinkingDisplay: "omitted"
+    },
+    feedback: {
+      provider: "openai",
+      model: appFeedbackModel,
+      maxOutputTokens: 2600,
+      temperature: "",
+      topP: "",
+      reasoningEffort: appFeedbackReasoningEffort || "medium",
+      thinkingType: "disabled",
+      thinkingBudgetTokens: 0,
+      thinkingDisplay: "omitted"
+    }
   }
 };
 
@@ -140,7 +165,69 @@ async function saveDb() {
 function mergeSettings(base, incoming) {
   return {
     donation: { ...(base.donation || {}), ...(incoming.donation || {}) },
-    cost: { ...(base.cost || {}), ...(incoming.cost || {}) }
+    cost: { ...(base.cost || {}), ...(incoming.cost || {}) },
+    ai: mergeAiSettings(base.ai || {}, incoming.ai || {})
+  };
+}
+
+function mergeAiSettings(base = {}, incoming = {}) {
+  return {
+    chat: { ...(base.chat || {}), ...(incoming.chat || {}) },
+    feedback: { ...(base.feedback || {}), ...(incoming.feedback || {}) }
+  };
+}
+
+function cleanOptionalNumber(value, { min = 0, max = Number.MAX_SAFE_INTEGER } = {}) {
+  if (value === "" || value === null || value === undefined) return "";
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "";
+  return Math.min(max, Math.max(min, number));
+}
+
+function sanitizeModelSettings(input = {}, fallback = {}) {
+  const provider = input.provider === "anthropic" ? "anthropic" : "openai";
+  const model = String(input.model || fallback.model || "").trim();
+  const maxOutputTokens = cleanOptionalNumber(input.maxOutputTokens, { min: 1, max: 64000 }) || fallback.maxOutputTokens || 900;
+  const reasoningEffort = ["", "none", "minimal", "low", "medium", "high", "xhigh"].includes(input.reasoningEffort)
+    ? input.reasoningEffort
+    : fallback.reasoningEffort || "none";
+  const thinkingType = ["disabled", "adaptive", "enabled"].includes(input.thinkingType)
+    ? input.thinkingType
+    : fallback.thinkingType || "disabled";
+  const thinkingDisplay = ["omitted", "summarized"].includes(input.thinkingDisplay)
+    ? input.thinkingDisplay
+    : fallback.thinkingDisplay || "omitted";
+
+  return {
+    provider,
+    model,
+    maxOutputTokens,
+    temperature: cleanOptionalNumber(input.temperature, { min: 0, max: 2 }),
+    topP: cleanOptionalNumber(input.topP, { min: 0, max: 1 }),
+    reasoningEffort,
+    thinkingType,
+    thinkingBudgetTokens: cleanOptionalNumber(input.thinkingBudgetTokens, { min: 1024, max: 64000 }) || 0,
+    thinkingDisplay
+  };
+}
+
+function sanitizeSettings(input = {}) {
+  const merged = mergeSettings(defaultSettings, input);
+  return {
+    donation: {
+      title: String(merged.donation.title || "후원"),
+      body: String(merged.donation.body || ""),
+      account: String(merged.donation.account || ""),
+      enabled: merged.donation.enabled !== false
+    },
+    cost: {
+      usdToKrw: Number(merged.cost.usdToKrw || usdToKrw),
+      monthlyBudgetKrw: Number(merged.cost.monthlyBudgetKrw || 0)
+    },
+    ai: {
+      chat: sanitizeModelSettings(merged.ai.chat, defaultSettings.ai.chat),
+      feedback: sanitizeModelSettings(merged.ai.feedback, defaultSettings.ai.feedback)
+    }
   };
 }
 
@@ -752,12 +839,77 @@ function extractText(response) {
   return parts.join("\n").trim();
 }
 
-async function callOpenAI({ apiKey, model, instructions, input, maxOutputTokens = 900, reasoningEffort = "" }) {
-  const data = await callOpenAIWithUsage({ apiKey, model, instructions, input, maxOutputTokens, reasoningEffort });
-  return data.text;
+function extractAnthropicText(response) {
+  return (response.content || [])
+    .filter((block) => block?.type === "text" && typeof block.text === "string")
+    .map((block) => block.text)
+    .join("\n")
+    .trim();
 }
 
-async function callOpenAIWithUsage({ apiKey, model, instructions, input, maxOutputTokens = 900, reasoningEffort = "" }) {
+function normalizeAnthropicUsage(usage = {}) {
+  return {
+    inputTokens: Number(usage.input_tokens || 0),
+    outputTokens: Number(usage.output_tokens || 0),
+    reasoningTokens: 0
+  };
+}
+
+function modelSettingsFor(modelType) {
+  const key = modelType === "feedback" ? "feedback" : "chat";
+  return sanitizeModelSettings(db.settings?.ai?.[key] || {}, defaultSettings.ai[key]);
+}
+
+function assertProviderKey(provider) {
+  if (provider === "anthropic") {
+    if (!appAnthropicKey) throw new Error("서버에 ANTHROPIC_API_KEY가 설정되어 있지 않습니다.");
+    return appAnthropicKey;
+  }
+  if (!appOpenAIKey) throw new Error("서버에 OPENAI_API_KEY가 설정되어 있지 않습니다.");
+  return appOpenAIKey;
+}
+
+async function callModelWithUsage({ modelType, instructions, input }) {
+  const settings = modelSettingsFor(modelType);
+  const apiKey = assertProviderKey(settings.provider);
+  if (settings.provider === "anthropic") {
+    const result = await callAnthropicWithUsage({
+      apiKey,
+      model: settings.model,
+      instructions,
+      input,
+      maxOutputTokens: settings.maxOutputTokens,
+      temperature: settings.temperature,
+      topP: settings.topP,
+      thinkingType: settings.thinkingType,
+      thinkingBudgetTokens: settings.thinkingBudgetTokens,
+      thinkingDisplay: settings.thinkingDisplay
+    });
+    return { ...result, provider: settings.provider, model: settings.model };
+  }
+  const result = await callOpenAIWithUsage({
+    apiKey,
+    model: settings.model,
+    instructions,
+    input,
+    maxOutputTokens: settings.maxOutputTokens,
+    reasoningEffort: settings.reasoningEffort,
+    temperature: settings.temperature,
+    topP: settings.topP
+  });
+  return { ...result, provider: settings.provider, model: settings.model };
+}
+
+async function callOpenAIWithUsage({
+  apiKey,
+  model,
+  instructions,
+  input,
+  maxOutputTokens = 900,
+  reasoningEffort = "",
+  temperature = "",
+  topP = ""
+}) {
   const payload = {
     model,
     instructions,
@@ -765,7 +917,9 @@ async function callOpenAIWithUsage({ apiKey, model, instructions, input, maxOutp
     max_output_tokens: maxOutputTokens,
     store: false
   };
-  if (reasoningEffort) {
+  if (temperature !== "") payload.temperature = Number(temperature);
+  if (topP !== "") payload.top_p = Number(topP);
+  if (reasoningEffort && reasoningEffort !== "none" && !model.includes("chat")) {
     payload.reasoning = { effort: reasoningEffort };
   }
 
@@ -793,6 +947,53 @@ async function callOpenAIWithUsage({ apiKey, model, instructions, input, maxOutp
     throw new Error("OpenAI 응답에서 텍스트를 찾지 못했습니다.");
   }
   return { text, usage: normalizeUsage(data.usage) };
+}
+
+async function callAnthropicWithUsage({
+  apiKey,
+  model,
+  instructions,
+  input,
+  maxOutputTokens = 900,
+  temperature = "",
+  topP = "",
+  thinkingType = "disabled",
+  thinkingBudgetTokens = 0,
+  thinkingDisplay = "omitted"
+}) {
+  const payload = {
+    model,
+    max_tokens: maxOutputTokens,
+    system: instructions,
+    messages: [{ role: "user", content: input }]
+  };
+  if (temperature !== "") payload.temperature = Number(temperature);
+  if (topP !== "") payload.top_p = Number(topP);
+  if (thinkingType === "adaptive") {
+    payload.thinking = { type: "adaptive", display: thinkingDisplay };
+  } else if (thinkingType === "enabled" && thinkingBudgetTokens > 0) {
+    payload.thinking = { type: "enabled", budget_tokens: thinkingBudgetTokens };
+  }
+
+  const result = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "anthropic-version": "2023-06-01",
+      "x-api-key": apiKey
+    },
+    body: JSON.stringify(payload)
+  });
+
+  const data = await result.json().catch(() => ({}));
+  if (!result.ok) {
+    const message = data?.error?.message || `Anthropic API request failed with status ${result.status}.`;
+    throw new Error(message);
+  }
+
+  const text = extractAnthropicText(data);
+  if (!text) throw new Error("Claude 응답에서 텍스트를 찾지 못했습니다.");
+  return { text, usage: normalizeAnthropicUsage(data.usage) };
 }
 
 function normalizeUsage(usage = {}) {
@@ -1352,9 +1553,7 @@ async function handleAppApi(req, res, url) {
     const user = requireAdmin(req, res);
     if (!user) return true;
     const body = await readJson(req);
-    db.settings = mergeSettings(defaultSettings, body.settings || body);
-    db.settings.cost.usdToKrw = Number(db.settings.cost.usdToKrw || usdToKrw);
-    db.settings.cost.monthlyBudgetKrw = Number(db.settings.cost.monthlyBudgetKrw || 0);
+    db.settings = sanitizeSettings(body.settings || body);
     await saveDb();
     json(res, 200, { settings: db.settings });
     return true;
@@ -1399,20 +1598,12 @@ async function handleApi(req, res, url) {
     const session = body.session || {};
     const persona = getPersona(session.personaId);
 
-    if (!appOpenAIKey) {
-      json(res, 500, { error: "서버에 OPENAI_API_KEY가 설정되어 있지 않습니다." });
-      return;
-    }
-
     if (path === "/api/start") {
       const input = initialPromptFor(session, persona);
-      const { text, usage } = await callOpenAIWithUsage({
-        apiKey: appOpenAIKey,
-        model: appChatModel,
+      const { text, usage, model } = await callModelWithUsage({
+        modelType: "chat",
         instructions: personaPrompt,
-        input,
-        maxOutputTokens: 1200,
-        reasoningEffort: appChatReasoningEffort
+        input
       });
       const conversation = createConversation({
         userId: user.id,
@@ -1423,7 +1614,7 @@ async function handleApi(req, res, url) {
         userId: user.id,
         conversationId: conversation.id,
         eventType: "chat_start",
-        model: appChatModel,
+        model,
         modelType: "chat",
         input,
         output: text,
@@ -1441,13 +1632,10 @@ async function handleApi(req, res, url) {
         return;
       }
       const input = chatPromptFor(session, persona, safeMessages);
-      const { text, usage } = await callOpenAIWithUsage({
-        apiKey: appOpenAIKey,
-        model: appChatModel,
+      const { text, usage, model } = await callModelWithUsage({
+        modelType: "chat",
         instructions: personaPrompt,
-        input,
-        maxOutputTokens: 1400,
-        reasoningEffort: appChatReasoningEffort
+        input
       });
       const conversation = findConversationForUser(user, body.conversationId);
       if (conversation) {
@@ -1457,7 +1645,7 @@ async function handleApi(req, res, url) {
           userId: user.id,
           conversationId: conversation.id,
           eventType: "chat_message",
-          model: appChatModel,
+          model,
           modelType: "chat",
           input,
           output: text,
@@ -1470,16 +1658,17 @@ async function handleApi(req, res, url) {
     }
 
     if (path === "/api/feedback") {
-      const input = feedbackInputFor(session, persona, body.messages || []);
-      const { text, usage } = await callOpenAIWithUsage({
-        apiKey: appOpenAIKey,
-        model: appFeedbackModel,
-        instructions: feedbackPrompt,
-        input,
-        maxOutputTokens: 2600,
-        reasoningEffort: appFeedbackReasoningEffort
-      });
       const conversation = findConversationForUser(user, body.conversationId);
+      if (conversation?.status === "finished" && conversation.feedbackText) {
+        json(res, 200, { text: conversation.feedbackText, alreadyFinished: true });
+        return;
+      }
+      const input = feedbackInputFor(session, persona, body.messages || []);
+      const { text, usage, model } = await callModelWithUsage({
+        modelType: "feedback",
+        instructions: feedbackPrompt,
+        input
+      });
       if (conversation) {
         conversation.messages = body.messages || conversation.messages;
         conversation.feedbackText = text;
@@ -1491,7 +1680,7 @@ async function handleApi(req, res, url) {
           userId: user.id,
           conversationId: conversation.id,
           eventType: "feedback",
-          model: appFeedbackModel,
+          model,
           modelType: "feedback",
           input,
           output: text,
