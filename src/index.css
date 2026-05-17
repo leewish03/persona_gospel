@@ -1,0 +1,129 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --radius: 0.85rem;
+  --background: oklch(0.985 0.012 91.49);
+  --foreground: oklch(0.21 0.016 175.44);
+  --card: oklch(0.998 0.008 91.49);
+  --card-foreground: var(--foreground);
+  --popover: var(--card);
+  --popover-foreground: var(--foreground);
+  --primary: oklch(0.48 0.105 180.58);
+  --primary-foreground: oklch(0.985 0.012 91.49);
+  --secondary: oklch(0.94 0.04 179.88);
+  --secondary-foreground: oklch(0.35 0.08 180.58);
+  --muted: oklch(0.94 0.014 91.49);
+  --muted-foreground: oklch(0.49 0.017 175.44);
+  --accent: oklch(0.93 0.045 72.44);
+  --accent-foreground: oklch(0.31 0.05 72.44);
+  --destructive: oklch(0.58 0.19 25.33);
+  --border: oklch(0.86 0.018 91.49);
+  --input: var(--border);
+  --ring: var(--primary);
+  --chart-1: oklch(0.61 0.12 180.58);
+  --chart-2: oklch(0.68 0.12 72.44);
+  --chart-3: oklch(0.55 0.14 22.44);
+  --chart-4: oklch(0.5 0.11 260.44);
+  --chart-5: oklch(0.72 0.12 140.44);
+  --sidebar: var(--card);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--secondary);
+  --sidebar-accent-foreground: var(--secondary-foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
+}
+
+@theme inline {
+  --font-sans: Inter, Pretendard, "Noto Sans KR", system-ui, sans-serif;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html,
+  body,
+  #root {
+    width: 100%;
+    height: 100%;
+    overflow-x: hidden;
+  }
+
+  body {
+    @apply overflow-hidden bg-gradient-to-br from-emerald-50 via-stone-100 to-rose-50 text-foreground antialiased;
+  }
+
+  * {
+    min-width: 0;
+  }
+
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+@layer components {
+  [data-slot="card"] {
+    @apply shadow-[0_10px_28px_rgba(23,33,31,0.08)];
+  }
+
+  [data-slot="drawer-content"] {
+    @apply rounded-t-3xl;
+  }
+
+  [data-slot="popover-content"] {
+    @apply rounded-2xl shadow-xl;
+  }
+
+  [data-chart] {
+    @apply max-w-full overflow-hidden;
+  }
+}
+
+.feedback-content h2 {
+  @apply mt-4 text-base font-black text-primary;
+}
+
+.feedback-content p,
+.feedback-content li {
+  @apply text-sm leading-7 text-muted-foreground;
+}
+
+.feedback-content ul,
+.feedback-content ol {
+  @apply grid gap-2 pl-5;
+}

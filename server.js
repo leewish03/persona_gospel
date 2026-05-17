@@ -818,6 +818,78 @@ function usageSummary(events = db.usageEvents) {
   };
 }
 
+function filterUsageEvents(events = db.usageEvents, searchParams = new URLSearchParams()) {
+  const from = searchParams.get("from") ? new Date(searchParams.get("from")) : null;
+  const to = searchParams.get("to") ? new Date(searchParams.get("to")) : null;
+  const q = String(searchParams.get("q") || "").trim().toLowerCase();
+  return events.filter((event) => {
+    const created = new Date(event.createdAt);
+    if (from && created < from) return false;
+    if (to && created > to) return false;
+    if (!q) return true;
+    const user = db.users.find((item) => item.id === event.userId);
+    const conversation = db.conversations.find((item) => item.id === event.conversationId);
+    const haystack = [
+      event.eventType,
+      event.model,
+      user?.email,
+      user?.displayName,
+      user?.profile?.name,
+      user?.profile?.church,
+      conversation?.session?.personaId,
+      conversation?.session?.goal
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    return haystack.includes(q);
+  });
+}
+
+function usageBreakdowns(events = []) {
+  const byDayMap = new Map();
+  const byUserMap = new Map();
+  const addTotals = (target, event) => {
+    target.events += 1;
+    target.inputTokens += Number(event.inputTokens || 0);
+    target.outputTokens += Number(event.outputTokens || 0);
+    target.estimatedCostKrw += Number(event.estimatedCostKrw || 0);
+    target.estimatedCostUsd += Number(event.estimatedCostUsd || 0);
+  };
+  for (const event of events) {
+    const day = String(event.createdAt || "").slice(0, 10) || "unknown";
+    if (!byDayMap.has(day)) {
+      byDayMap.set(day, { date: day, events: 0, inputTokens: 0, outputTokens: 0, estimatedCostKrw: 0, estimatedCostUsd: 0 });
+    }
+    addTotals(byDayMap.get(day), event);
+
+    const user = db.users.find((item) => item.id === event.userId);
+    const key = event.userId || "unknown";
+    if (!byUserMap.has(key)) {
+      byUserMap.set(key, {
+        userId: key,
+        name: user?.profile?.name || user?.displayName || user?.email || "알 수 없음",
+        email: user?.email || "",
+        events: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        estimatedCostKrw: 0,
+        estimatedCostUsd: 0
+      });
+    }
+    addTotals(byUserMap.get(key), event);
+  }
+  const normalize = (item) => ({
+    ...item,
+    estimatedCostKrw: Number(item.estimatedCostKrw.toFixed(2)),
+    estimatedCostUsd: Number(item.estimatedCostUsd.toFixed(6))
+  });
+  return {
+    byDay: [...byDayMap.values()].map(normalize).sort((a, b) => a.date.localeCompare(b.date)),
+    byUser: [...byUserMap.values()].map(normalize).sort((a, b) => b.estimatedCostKrw - a.estimatedCostKrw)
+  };
+}
+
 async function readJson(req) {
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
@@ -1762,7 +1834,10 @@ async function handleAppApi(req, res, url) {
           .toLowerCase()
           .includes(q);
       })
-      .map((item) => ({ ...publicUser(item), ...userActivityStats(item.id) }));
+      .map((item) => {
+        const usage = usageSummary(db.usageEvents.filter((event) => event.userId === item.id));
+        return { ...publicUser(item), ...userActivityStats(item.id), usage };
+      });
     json(res, 200, { users: paginate(users, url.searchParams).items });
     return true;
   }
@@ -1792,7 +1867,13 @@ async function handleAppApi(req, res, url) {
   if (path === "/api/admin/usage" && req.method === "GET") {
     const user = requireAdmin(req, res);
     if (!user) return true;
-    json(res, 200, { usage: usageSummary(), events: db.usageEvents.slice(0, 50) });
+    const filtered = filterUsageEvents(db.usageEvents, url.searchParams);
+    const limit = Math.min(500, Math.max(1, Number(url.searchParams.get("limit") || 200)));
+    json(res, 200, {
+      usage: usageSummary(filtered),
+      events: filtered.slice(0, limit),
+      ...usageBreakdowns(filtered)
+    });
     return true;
   }
 
