@@ -11,6 +11,16 @@ import {
 import { Bar, BarChart, CartesianGrid, XAxis } from "recharts";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle
+} from "@/components/ui/alert-dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,24 +32,8 @@ import {
   AccordionItem,
   AccordionTrigger
 } from "@/components/ui/accordion";
-import {
-  Drawer,
-  DrawerContent,
-  DrawerDescription,
-  DrawerHeader,
-  DrawerTitle,
-  DrawerTrigger
-} from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Popover,
-  PopoverContent,
-  PopoverDescription,
-  PopoverHeader,
-  PopoverTitle,
-  PopoverTrigger
-} from "@/components/ui/popover";
 import { Progress } from "@/components/ui/progress";
 import {
   Select,
@@ -87,40 +81,43 @@ function SelectControl({ id, label, value, onChange, placeholder, options, disab
 
 function AppShell({ state, actions, children }) {
   const meta = screenMeta[state.currentScreen] || screenMeta.home;
+  const isHome = state.currentScreen === "home";
   const actionless = ["login", "history", "historyDetail", "settings", "admin"].includes(state.currentScreen);
   const primaryLabel = state.currentScreen === "review" && !state.reviewConfirmed ? "내용 확인" : meta.action;
-  const showBottom = !actionless && !(state.currentScreen === "chat" && state.sessionStarted);
+  const showBottom = !isHome && !actionless && !(state.currentScreen === "chat" && state.sessionStarted);
   const showTabs = state.hasUser && state.profileComplete && !["login", "profile"].includes(state.currentScreen);
 
   return (
-    <main className="mx-auto grid h-dvh max-h-dvh w-full max-w-[480px] grid-rows-[auto_auto_minmax(0,1fr)_auto_auto] overflow-hidden bg-background shadow-2xl ring-1 ring-border/60">
-      <header className="grid grid-cols-[44px_minmax(0,1fr)_58px] items-center gap-2 border-b bg-card/80 px-4 pb-3 pt-4 backdrop-blur">
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="이전 단계"
-          className={cn("rounded-full disabled:bg-muted disabled:text-muted-foreground", state.currentScreen === "home" && "invisible")}
-          disabled={state.isBusy || (state.currentScreen === "chat" && state.sessionStarted)}
-          onClick={actions.previousScreen}
-        >
-          <ChevronLeft />
-        </Button>
-        <div className="min-w-0 text-center">
-          <p className="text-xs font-black uppercase text-primary">{meta.eyebrow}</p>
-          <h1 className="truncate text-base font-black">{meta.title}</h1>
-        </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          className={cn("rounded-full font-black disabled:bg-muted disabled:text-muted-foreground", state.currentScreen === "home" && "invisible")}
-          disabled={state.isBusy}
-          onClick={actions.resetAll}
-        >
-          처음
-        </Button>
-      </header>
-      <Progress value={state.setupProgress} className="mx-4 h-1 w-auto" />
-      <section className="min-h-0 overflow-y-auto p-4">{children}</section>
+    <main className={cn("mx-auto grid h-dvh max-h-dvh w-full max-w-[480px] overflow-hidden bg-background shadow-2xl ring-1 ring-border/60", isHome ? "grid-rows-[minmax(0,1fr)]" : "grid-rows-[auto_auto_minmax(0,1fr)_auto_auto]")}>
+      {isHome ? null : (
+        <header className="grid grid-cols-[44px_minmax(0,1fr)_58px] items-center gap-2 border-b bg-card/80 px-4 pb-3 pt-4 backdrop-blur">
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="이전 단계"
+            className="rounded-full disabled:bg-muted disabled:text-muted-foreground"
+            disabled={state.isBusy || (state.currentScreen === "chat" && state.sessionStarted)}
+            onClick={actions.previousScreen}
+          >
+            <ChevronLeft />
+          </Button>
+          <div className="min-w-0 text-center">
+            <p className="text-xs font-black uppercase text-primary">{meta.eyebrow}</p>
+            <h1 className="truncate text-base font-black">{meta.title}</h1>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="rounded-full font-black disabled:bg-muted disabled:text-muted-foreground"
+            disabled={state.isBusy}
+            onClick={actions.resetAll}
+          >
+            처음
+          </Button>
+        </header>
+      )}
+      {isHome ? null : <Progress value={state.setupProgress} className="mx-4 h-1 w-auto" />}
+      <section className={cn("min-h-0", isHome ? "overflow-hidden p-0" : "overflow-y-auto p-4")}>{children}</section>
       {state.currentScreen === "chat" ? <ChatComposer state={state} actions={actions} /> : null}
       {showBottom ? (
         <footer className={cn("grid gap-2 border-t bg-card/95 p-4 shadow-[0_-12px_32px_rgba(23,33,31,0.08)]", meta.secondary && "grid-cols-2")}>
@@ -135,7 +132,44 @@ function AppShell({ state, actions, children }) {
         </footer>
       ) : null}
       {showTabs ? <TabBar state={state} actions={actions} /> : null}
+      <PendingActionDialog state={state} actions={actions} />
     </main>
+  );
+}
+
+function PendingActionDialog({ state, actions }) {
+  const pending = state.pendingDialog;
+  const copy = {
+    navigation: {
+      title: "대화 화면을 잠시 벗어날까요?",
+      description: "대화가 바로 끊기지는 않습니다. 지금까지의 흐름은 유지되며, 하단의 훈련 탭을 누르면 다시 채팅으로 돌아올 수 있습니다.",
+      action: "이동하기"
+    },
+    reset: {
+      title: "처음으로 돌아갈까요?",
+      description: "현재 화면의 진행 상태를 초기화하고 홈으로 돌아갑니다. 저장된 훈련 기록은 그대로 남습니다.",
+      action: "처음으로"
+    },
+    feedback: {
+      title: "피드백을 받을까요?",
+      description: "피드백을 생성하면 이 훈련 대화가 종료되고 리포트 화면으로 이동합니다.",
+      action: "피드백 받기"
+    }
+  }[pending?.type || "navigation"];
+
+  return (
+    <AlertDialog open={Boolean(pending)} onOpenChange={(open) => !open && actions.cancelPendingDialog()}>
+      <AlertDialogContent size="sm" className="max-w-[calc(100vw-2rem)] rounded-3xl">
+        <AlertDialogHeader>
+          <AlertDialogTitle>{copy.title}</AlertDialogTitle>
+          <AlertDialogDescription>{copy.description}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel onClick={actions.cancelPendingDialog}>취소</AlertDialogCancel>
+          <AlertDialogAction onClick={actions.confirmPendingDialog}>{copy.action}</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
@@ -172,16 +206,26 @@ function TabBar({ state, actions }) {
   );
 }
 
-function HomeScreen({ state }) {
+function HomeScreen({ state, actions }) {
+  const cta = !state.hasUser ? "로그인하고 시작" : state.profileComplete ? "훈련 시작" : "프로필 입력";
   return (
-    <div className="relative -m-4 h-full min-h-[620px] overflow-hidden bg-stone-900">
-      <img className="absolute inset-0 size-full object-cover object-top" src="/assets/home-cover.jpg" alt="카페에서 진지하게 대화하는 두 사람" />
-      <div className="absolute inset-0 bg-gradient-to-b from-black/15 via-black/10 to-black/80" />
-      <div className="absolute inset-x-0 bottom-0 p-6 text-white">
-        <Badge variant="secondary" className="mb-4">Witness Lab</Badge>
-        <h2 className="text-3xl font-black leading-tight">복음을 전하는 대화,<br />먼저 연습하세요</h2>
-        <p className="mt-3 leading-7 text-white/85">복음 전도가 망설여질 때, 실제 대화 전에 안전하게 연습해보세요.</p>
-        {state.hasUser ? <p className="mt-5 text-sm text-white/70">{state.auth.user.profile?.name || state.auth.user.displayName}님, 이어서 훈련할 수 있습니다.</p> : null}
+    <div className="relative h-full overflow-hidden bg-stone-950">
+      <img className="absolute inset-0 size-full select-none object-cover object-center" draggable="false" src="/assets/home-cover.jpg" alt="카페에서 진지하게 대화하는 두 사람" />
+      <div className="absolute inset-0 bg-gradient-to-b from-black/25 via-black/20 to-black/75" />
+      <div className="absolute inset-x-0 top-0 z-10 px-5 pt-[max(1rem,env(safe-area-inset-top))] text-white">
+        <p className="text-xs font-black uppercase tracking-wide text-white/80">Witness Lab</p>
+        <h1 className="mt-1 text-lg font-black">복음 대화 훈련소</h1>
+      </div>
+      <div className="absolute inset-x-0 bottom-0 z-10 grid gap-4 p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] text-white">
+        <div>
+          <Badge variant="secondary" className="mb-3 bg-white/90 text-stone-900">Mobile Training</Badge>
+          <h2 className="text-[clamp(1.65rem,8vw,2.6rem)] font-black leading-tight">복음을 전하는 대화,<br />먼저 연습하세요</h2>
+          <p className="mt-3 max-w-sm text-sm leading-6 text-white/85">실제 대화 전에 안전하게 연습하고, 끝나면 피드백 리포트를 확인하세요.</p>
+          {state.hasUser ? <p className="mt-3 text-xs font-semibold text-white/70">{state.auth.user.profile?.name || state.auth.user.displayName}님, 이어서 훈련할 수 있습니다.</p> : null}
+        </div>
+        <Button className="h-12 rounded-full bg-primary text-base font-black shadow-2xl hover:bg-primary/90" onClick={actions.handlePrimaryAction}>
+          {cta}
+        </Button>
       </div>
     </div>
   );
@@ -323,7 +367,7 @@ function ChatScreen({ state }) {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
   }, [state.messages, state.waitingForAssistant]);
   return (
-    <div ref={listRef} className="flex h-full min-h-[520px] flex-col gap-3 overflow-y-auto rounded-2xl bg-muted p-2">
+    <div ref={listRef} className="flex h-full flex-col gap-3 overflow-y-auto rounded-2xl bg-muted p-2">
       <div className="rounded-full bg-background/80 px-3 py-2 text-center text-xs font-black text-muted-foreground">
         {labels.persona} · {labels.relationship} · {labels.setting}
       </div>
@@ -371,43 +415,9 @@ function ChatComposer({ state, actions }) {
   };
   return (
     <form className="grid grid-cols-[minmax(0,1fr)_68px] gap-2 border-t bg-card/95 p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] shadow-[0_-12px_32px_rgba(23,33,31,0.08)]" onSubmit={submit}>
-      <div className="col-span-full grid grid-cols-[1fr_auto] items-center gap-2">
-        <Drawer>
-          <DrawerTrigger asChild><Button type="button" variant="secondary" size="sm" className="justify-self-start rounded-full">상황 보기</Button></DrawerTrigger>
-          <DrawerContent>
-            <div className="mx-auto w-full max-w-[480px]">
-              <DrawerHeader>
-                <DrawerTitle>{labels.persona}</DrawerTitle>
-                <DrawerDescription>현재 대화 설정을 확인합니다.</DrawerDescription>
-              </DrawerHeader>
-              <div className="grid gap-3 px-4 pb-6 text-sm">
-                <div className="grid gap-2 rounded-2xl border bg-muted/60 p-4">
-                  <span className="text-xs font-black text-muted-foreground">관계</span>
-                  <strong>{labels.relationship || "관계 미설정"}</strong>
-                </div>
-                <div className="grid gap-2 rounded-2xl border bg-muted/60 p-4">
-                  <span className="text-xs font-black text-muted-foreground">상황</span>
-                  <strong>{labels.setting || "상황 미설정"}</strong>
-                </div>
-                <div className="grid gap-2 rounded-2xl border bg-muted/60 p-4">
-                  <span className="text-xs font-black text-muted-foreground">훈련 초점</span>
-                  <strong>{labels.goal || "훈련 초점 미설정"}</strong>
-                </div>
-                <p className="rounded-2xl bg-primary/10 p-3 text-primary">피드백은 한 번 이상 답한 뒤 받을 수 있습니다. 진행 중에는 뒤로가기를 막아 실수로 대화를 끊지 않습니다.</p>
-              </div>
-            </div>
-          </DrawerContent>
-        </Drawer>
-        <Popover>
-          <PopoverTrigger asChild><Button type="button" variant="outline" size="sm" className="rounded-full">전환 안내</Button></PopoverTrigger>
-          <PopoverContent align="end" className="w-72 max-w-[calc(100vw-2rem)]">
-            <PopoverHeader>
-              <PopoverTitle>이동 보호</PopoverTitle>
-              <PopoverDescription>피드백 생성 중에는 전환 버튼이 비활성화되고, 진행 중 대화에서 다른 탭으로 갈 때 확인을 받습니다.</PopoverDescription>
-            </PopoverHeader>
-          </PopoverContent>
-        </Popover>
-        <span className="col-span-full rounded-full bg-muted px-3 py-1.5 text-center text-xs font-black text-muted-foreground">{userTurns}턴 진행 · {assistantTurns}개 응답</span>
+      <div className="col-span-full grid gap-1.5">
+        <span className="rounded-full bg-muted px-3 py-1.5 text-center text-xs font-black text-muted-foreground">{userTurns}턴 진행 · {assistantTurns}개 응답</span>
+        <span className="truncate px-2 text-center text-[0.72rem] font-semibold text-muted-foreground">{labels.persona} · {labels.relationship} · {labels.goal}</span>
       </div>
       <Textarea
         value={draft}
@@ -602,6 +612,7 @@ function AdminScreen({ state, actions }) {
           <Button className="rounded-full" onClick={() => actions.loadAdmin(filters)}>필터 적용</Button>
         </CardContent>
       </Card>
+      <AdminSettings settings={settings.settings || {}} onSave={actions.saveAdminSettings} />
       <div className="grid grid-cols-2 gap-3">
         <Metric label="가입 사용자" value={formatCount(summary.users)} detail={`프로필 완료 ${formatPercent(percentOf(summary.completedProfiles, summary.users))}`} />
         <Metric label="전체 훈련" value={formatCount(summary.conversations)} detail={`완료율 ${formatPercent(percentOf(summary.finishedConversations, summary.conversations))}`} />
@@ -610,7 +621,6 @@ function AdminScreen({ state, actions }) {
       </div>
       <UsageChart usage={usage} />
       <AdminTables state={state} users={users.users || []} conversations={conversations.conversations || []} usage={usage} />
-      <AdminSettings settings={settings.settings || {}} onSave={actions.saveAdminSettings} />
     </div>
   );
 }
@@ -743,12 +753,110 @@ function AdminAccordion({ value, title, children }) {
   );
 }
 
-function AdminSettings({ settings, onSave }) {
-  const [form, setForm] = useState(() => ({
+const modelPresets = {
+  chat: [
+    { value: "gpt-5.5-mini", label: "GPT 5.5 mini" },
+    { value: "gpt-5.5", label: "GPT 5.5" },
+    { value: "gpt-5.4-mini", label: "GPT 5.4 mini" },
+    { value: "gpt-5.4", label: "GPT 5.4" },
+    { value: "chat-latest", label: "Chat latest" }
+  ],
+  feedback: [
+    { value: "gpt-5.5", label: "GPT 5.5" },
+    { value: "gpt-5.5-mini", label: "GPT 5.5 mini" },
+    { value: "gpt-5.4", label: "GPT 5.4" },
+    { value: "gpt-5.4-mini", label: "GPT 5.4 mini" }
+  ]
+};
+
+const defaultModelSettings = {
+  chat: {
+    provider: "openai",
+    model: "gpt-5.4-mini",
+    maxOutputTokens: 1400,
+    temperature: "",
+    topP: "",
+    reasoningEffort: "high",
+    thinkingType: "disabled",
+    thinkingBudgetTokens: 0,
+    thinkingDisplay: "omitted"
+  },
+  feedback: {
+    provider: "openai",
+    model: "gpt-5.4",
+    maxOutputTokens: 2600,
+    temperature: "",
+    topP: "",
+    reasoningEffort: "medium",
+    thinkingType: "disabled",
+    thinkingBudgetTokens: 0,
+    thinkingDisplay: "omitted"
+  }
+};
+
+function normalizeAdminSettings(settings = {}) {
+  return {
     donation: settings.donation || {},
     cost: settings.cost || {},
-    ai: settings.ai || {}
-  }));
+    ai: {
+      chat: { ...defaultModelSettings.chat, ...(settings.ai?.chat || {}) },
+      feedback: { ...defaultModelSettings.feedback, ...(settings.ai?.feedback || {}) }
+    }
+  };
+}
+
+function ModelSettingsCard({ kind, title, description, settings, onChange }) {
+  const prefix = kind === "feedback" ? "feedback" : "chat";
+  const update = (field, value) => onChange(`ai.${prefix}.${field}`, value);
+  return (
+    <Card className="shadow-none">
+      <CardHeader>
+        <CardTitle className="text-base">{title}</CardTitle>
+        <CardDescription>{description}</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-3">
+        <SelectControl
+          id={`${prefix}-model`}
+          label="모델"
+          value={settings.model || defaultModelSettings[prefix].model}
+          onChange={(model) => update("model", model)}
+          placeholder="모델 선택"
+          options={modelPresets[prefix]}
+        />
+        <div className="grid grid-cols-2 gap-3">
+          <div className="grid gap-2">
+            <Label htmlFor={`${prefix}-max-output`}>최대 출력</Label>
+            <Input
+              id={`${prefix}-max-output`}
+              type="number"
+              min="1"
+              max="64000"
+              value={settings.maxOutputTokens || defaultModelSettings[prefix].maxOutputTokens}
+              onChange={(event) => update("maxOutputTokens", Number(event.target.value || defaultModelSettings[prefix].maxOutputTokens))}
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor={`${prefix}-temperature`}>Temperature</Label>
+            <Input
+              id={`${prefix}-temperature`}
+              type="number"
+              min="0"
+              max="2"
+              step="0.1"
+              value={settings.temperature ?? ""}
+              placeholder="기본"
+              onChange={(event) => update("temperature", event.target.value)}
+            />
+          </div>
+        </div>
+        <p className="text-xs leading-5 text-muted-foreground">나머지 공급자/추론/고급 파라미터는 현재 운영 기본값으로 유지합니다.</p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function AdminSettings({ settings, onSave }) {
+  const [form, setForm] = useState(() => normalizeAdminSettings(settings));
   const [status, setStatus] = useState("");
   const update = (path, value) => {
     setForm((current) => {
@@ -761,11 +869,26 @@ function AdminSettings({ settings, onSave }) {
     });
   };
   return (
-    <Accordion type="single" collapsible>
+    <Accordion type="single" collapsible defaultValue="settings">
       <AccordionItem value="settings" className="rounded-xl border bg-card px-4">
         <AccordionTrigger className="font-black">운영 설정</AccordionTrigger>
         <AccordionContent>
           <div className="grid gap-3">
+            <ModelSettingsCard
+              kind="chat"
+              title="챗봇 모델 설정"
+              description="대화 상대 페르소나가 응답할 때 사용하는 모델입니다."
+              settings={form.ai.chat}
+              onChange={update}
+            />
+            <ModelSettingsCard
+              kind="feedback"
+              title="피드백 모델 설정"
+              description="훈련 종료 후 리포트를 생성할 때 사용하는 모델입니다."
+              settings={form.ai.feedback}
+              onChange={update}
+            />
+            <Separator />
             <Input value={form.donation.title || ""} onChange={(event) => update("donation.title", event.target.value)} placeholder="후원 제목" />
             <Textarea value={form.donation.body || ""} onChange={(event) => update("donation.body", event.target.value)} placeholder="후원 안내" />
             <Input value={form.donation.account || ""} onChange={(event) => update("donation.account", event.target.value)} placeholder="후원 계좌/링크" />
@@ -792,7 +915,7 @@ function EmptyCard({ text }) {
 export default function App() {
   const { state, actions } = useAppController();
   let screen = null;
-  if (state.currentScreen === "home") screen = <HomeScreen state={state} />;
+  if (state.currentScreen === "home") screen = <HomeScreen state={state} actions={actions} />;
   if (state.currentScreen === "login") screen = <LoginScreen state={state} actions={actions} />;
   if (state.currentScreen === "profile") screen = <ProfileScreen state={state} actions={actions} />;
   if (state.currentScreen === "persona") screen = <PersonaScreen state={state} actions={actions} />;

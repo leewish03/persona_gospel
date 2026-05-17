@@ -33,6 +33,7 @@ export function useAppController() {
   const [history, setHistory] = useState({ items: [], stats: null, filters: {}, detail: null, loading: false });
   const [admin, setAdmin] = useState({ data: null, filters: { q: "", status: "", from: "", to: "" }, loading: false });
   const [shareNotice, setShareNotice] = useState("");
+  const [pendingDialog, setPendingDialog] = useState(null);
 
   const hasUser = Boolean(auth.user);
   const profileComplete = Boolean(auth.user?.profileComplete || isProfileComplete(auth.user?.profile));
@@ -50,20 +51,13 @@ export function useAppController() {
     setProfileForm(cleanProfile({ ...user?.profile, name: user?.profile?.name || user?.displayName || "" }));
   }, [auth.user]);
 
-  const blockNavigation = useCallback(
-    (target) => {
-      if (isBusy) return true;
-      if (currentScreen === "chat" && sessionStarted && target !== "chat" && target !== "feedback") {
-        return !window.confirm("진행 중인 대화가 있습니다. 이 화면을 벗어나면 대화 흐름이 끊길 수 있습니다. 이동할까요?");
-      }
-      return false;
-    },
-    [currentScreen, isBusy, sessionStarted]
-  );
-
   const goTo = useCallback(
     (screen, options = {}) => {
-      if (blockNavigation(screen)) return false;
+      if (isBusy) return false;
+      if (!options.confirmed && currentScreen === "chat" && sessionStarted && screen !== "chat" && screen !== "feedback") {
+        setPendingDialog({ type: "navigation", target: screen, options });
+        return false;
+      }
       if (["persona", "context", "review", "chat"].includes(screen)) {
         if (!hasUser) {
           setCurrentScreen("login");
@@ -83,7 +77,7 @@ export function useAppController() {
       setCurrentScreen(screen);
       return true;
     },
-    [blockNavigation, currentScreen, fillProfileForm, hasUser, profileComplete]
+    [currentScreen, fillProfileForm, hasUser, isBusy, profileComplete, sessionStarted]
   );
 
   const previousScreen = useCallback(() => {
@@ -105,7 +99,10 @@ export function useAppController() {
 
   const resetAll = useCallback(() => {
     if (isBusy) return;
-    if (sessionStarted && !window.confirm("진행 중인 대화를 종료하고 처음으로 돌아갈까요?")) return;
+    if (sessionStarted) {
+      setPendingDialog({ type: "reset" });
+      return;
+    }
     setScreenStack([]);
     setActiveSession(null);
     setConversationId("");
@@ -116,6 +113,19 @@ export function useAppController() {
     setContextForm({ relationship: "", setting: "", goal: "" });
     setCurrentScreen("home");
   }, [isBusy, sessionStarted]);
+
+  const resetAllConfirmed = useCallback(() => {
+    setScreenStack([]);
+    setActiveSession(null);
+    setConversationId("");
+    setMessages([]);
+    setLatestFeedbackText("");
+    setSessionStarted(false);
+    setWaitingForAssistant(false);
+    setContextForm({ relationship: "", setting: "", goal: "" });
+    setCurrentScreen("home");
+    setPendingDialog(null);
+  }, []);
 
   const loadHistory = useCallback(async (filters = history.filters) => {
     setHistory((value) => ({ ...value, filters, loading: true }));
@@ -305,6 +315,13 @@ export function useAppController() {
   const finishSession = useCallback(async () => {
     const userTurns = messages.filter((message) => message.role === "user").length;
     if (!userTurns || isBusy || !sessionStarted) return;
+    setPendingDialog({ type: "feedback" });
+  }, [isBusy, messages, sessionStarted]);
+
+  const finishSessionConfirmed = useCallback(async () => {
+    const userTurns = messages.filter((message) => message.role === "user").length;
+    if (!userTurns || isBusy || !sessionStarted) return;
+    setPendingDialog(null);
     if (latestFeedbackText) {
       setSessionStarted(false);
       setCurrentScreen("feedback");
@@ -327,6 +344,27 @@ export function useAppController() {
       setIsBusy(false);
     }
   }, [conversationId, currentSession, isBusy, latestFeedbackText, messages, sessionStarted]);
+
+  const cancelPendingDialog = useCallback(() => {
+    setPendingDialog(null);
+  }, []);
+
+  const confirmPendingDialog = useCallback(async () => {
+    const pending = pendingDialog;
+    if (!pending) return;
+    if (pending.type === "navigation") {
+      setPendingDialog(null);
+      goTo(pending.target, { ...(pending.options || {}), confirmed: true });
+      return;
+    }
+    if (pending.type === "reset") {
+      resetAllConfirmed();
+      return;
+    }
+    if (pending.type === "feedback") {
+      await finishSessionConfirmed();
+    }
+  }, [finishSessionConfirmed, goTo, pendingDialog, resetAllConfirmed]);
 
   const restoreSession = useCallback((session = {}) => {
     setSelectedPersonaId(session.personaId || selectedPersonaId);
@@ -466,6 +504,7 @@ export function useAppController() {
       history,
       admin,
       shareNotice,
+      pendingDialog,
       hasUser,
       profileComplete,
       isAdmin
@@ -478,6 +517,8 @@ export function useAppController() {
       setReviewConfirmed,
       setHistory,
       setAdmin,
+      cancelPendingDialog,
+      confirmPendingDialog,
       goTo,
       previousScreen,
       resetAll,
