@@ -43,7 +43,6 @@ import {
   SelectTrigger,
   SelectValue
 } from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { useAppController } from "@/hooks/useAppController";
 import {
@@ -871,7 +870,7 @@ function AdminSettings({ settings, onSave }) {
   return (
     <Accordion type="single" collapsible defaultValue="settings">
       <AccordionItem value="settings" className="rounded-xl border bg-card px-4">
-        <AccordionTrigger className="font-black">운영 설정</AccordionTrigger>
+        <AccordionTrigger className="font-black">모델 설정</AccordionTrigger>
         <AccordionContent>
           <div className="grid gap-3">
             <ModelSettingsCard
@@ -888,14 +887,7 @@ function AdminSettings({ settings, onSave }) {
               settings={form.ai.feedback}
               onChange={update}
             />
-            <Separator />
-            <Input value={form.donation.title || ""} onChange={(event) => update("donation.title", event.target.value)} placeholder="후원 제목" />
-            <Textarea value={form.donation.body || ""} onChange={(event) => update("donation.body", event.target.value)} placeholder="후원 안내" />
-            <Input value={form.donation.account || ""} onChange={(event) => update("donation.account", event.target.value)} placeholder="후원 계좌/링크" />
-            <Input type="number" value={form.cost.usdToKrw || 1380} onChange={(event) => update("cost.usdToKrw", Number(event.target.value || 1380))} placeholder="원/달러 환율" />
-            <Input type="number" value={form.cost.monthlyBudgetKrw || 0} onChange={(event) => update("cost.monthlyBudgetKrw", Number(event.target.value || 0))} placeholder="월 예산 기준" />
-            <Separator />
-            <Button onClick={async () => { await onSave({ ...form, donation: { ...form.donation, enabled: true } }); setStatus("저장했습니다."); }}>운영 설정 저장</Button>
+            <Button onClick={async () => { await onSave({ ...form, donation: { ...form.donation, enabled: true } }); setStatus("저장했습니다."); }}>모델 설정 저장</Button>
             {status ? <p className="text-sm text-muted-foreground">{status}</p> : null}
           </div>
         </AccordionContent>
