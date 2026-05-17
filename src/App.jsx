@@ -1,0 +1,772 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  AlertCircle,
+  BarChart3,
+  BookOpen,
+  CheckCircle2,
+  ChevronLeft,
+  Home,
+  MessageCircle,
+  PieChart,
+  Settings,
+  Shield,
+  UserRound
+} from "lucide-react";
+import { Bar, BarChart, CartesianGrid, XAxis } from "recharts";
+
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger
+} from "@/components/ui/accordion";
+import {
+  Drawer,
+  DrawerContent,
+  DrawerDescription,
+  DrawerHeader,
+  DrawerTitle,
+  DrawerTrigger
+} from "@/components/ui/drawer";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Popover,
+  PopoverContent,
+  PopoverDescription,
+  PopoverHeader,
+  PopoverTitle,
+  PopoverTrigger
+} from "@/components/ui/popover";
+import { Progress } from "@/components/ui/progress";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Textarea } from "@/components/ui/textarea";
+import { useAppController } from "@/hooks/useAppController";
+import {
+  goalText,
+  personaImages,
+  relationshipText,
+  screenMeta,
+  settingImages,
+  settingText
+} from "@/lib/constants";
+import { formatCount, formatDate, formatKrw, formatPercent, markdownToHtml, percentOf, sessionLabels, usageEventLabel } from "@/lib/format";
+import { cn } from "@/lib/utils";
+
+function SelectControl({ id, label, value, onChange, placeholder, options, disabled }) {
+  return (
+    <div className="grid gap-2">
+      <Label htmlFor={id}>{label}</Label>
+      <Select value={value} onValueChange={onChange} disabled={disabled}>
+        <SelectTrigger id={id} className="w-full">
+          <SelectValue placeholder={placeholder} />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectGroup>
+            {options.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
+function AppShell({ state, actions, children }) {
+  const meta = screenMeta[state.currentScreen] || screenMeta.home;
+  const actionless = ["login", "history", "historyDetail", "settings", "admin"].includes(state.currentScreen);
+  const primaryLabel = state.currentScreen === "review" && !state.reviewConfirmed ? "내용 확인" : meta.action;
+  const showBottom = !actionless && !(state.currentScreen === "chat" && state.sessionStarted);
+  const showTabs = state.hasUser && state.profileComplete && !["login", "profile"].includes(state.currentScreen);
+
+  return (
+    <main className="mx-auto grid h-dvh max-h-dvh w-full max-w-[480px] grid-rows-[auto_auto_minmax(0,1fr)_auto_auto] overflow-hidden bg-background shadow-2xl">
+      <header className="grid grid-cols-[44px_minmax(0,1fr)_54px] items-center gap-2 px-4 pb-3 pt-4">
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="이전 단계"
+          className={cn(state.currentScreen === "home" && "invisible")}
+          disabled={state.isBusy || (state.currentScreen === "chat" && state.sessionStarted)}
+          onClick={actions.previousScreen}
+        >
+          <ChevronLeft />
+        </Button>
+        <div className="min-w-0 text-center">
+          <p className="text-xs font-black uppercase text-primary">{meta.eyebrow}</p>
+          <h1 className="truncate text-base font-black">{meta.title}</h1>
+        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          className={cn("font-black", state.currentScreen === "home" && "invisible")}
+          disabled={state.isBusy}
+          onClick={actions.resetAll}
+        >
+          처음
+        </Button>
+      </header>
+      <Progress value={state.setupProgress} className="mx-4 h-1 w-auto" />
+      <section className="min-h-0 overflow-y-auto p-4">{children}</section>
+      {state.currentScreen === "chat" ? <ChatComposer state={state} actions={actions} /> : null}
+      {showBottom ? (
+        <footer className={cn("grid gap-2 border-t bg-background/95 p-4", meta.secondary && "grid-cols-2")}>
+          <Button disabled={state.isBusy || (state.currentScreen === "review" && !state.reviewConfirmed && false)} onClick={actions.handlePrimaryAction}>
+            {primaryLabel}
+          </Button>
+          {meta.secondary ? (
+            <Button variant="secondary" disabled={state.isBusy} onClick={actions.handleSecondaryAction}>
+              {meta.secondary}
+            </Button>
+          ) : null}
+        </footer>
+      ) : null}
+      {showTabs ? <TabBar state={state} actions={actions} /> : null}
+    </main>
+  );
+}
+
+function TabBar({ state, actions }) {
+  const tabs = [
+    { key: "home", label: "훈련", icon: Home },
+    { key: "history", label: "기록", icon: BookOpen },
+    { key: "settings", label: "설정", icon: Settings },
+    ...(state.isAdmin ? [{ key: "admin", label: "관리", icon: Shield }] : [])
+  ];
+  return (
+    <nav className="grid auto-cols-fr grid-flow-col gap-2 border-t bg-background/95 px-3 py-2" aria-label="하단 내비게이션">
+      {tabs.map((tab) => {
+        const Icon = tab.icon;
+        const active = tab.key === state.currentScreen || (tab.key === "home" && ["persona", "context", "review", "chat", "feedback"].includes(state.currentScreen));
+        return (
+          <Button
+            key={tab.key}
+            type="button"
+            variant={active ? "secondary" : "ghost"}
+            className="h-14 flex-col gap-1 text-xs"
+            disabled={state.isBusy}
+            onClick={() => {
+              if (tab.key === "home" && state.sessionStarted) actions.goTo("chat");
+              else actions.goTo(tab.key);
+            }}
+          >
+            <Icon />
+            {tab.label}
+          </Button>
+        );
+      })}
+    </nav>
+  );
+}
+
+function HomeScreen({ state }) {
+  return (
+    <div className="relative -m-4 h-full min-h-[620px] overflow-hidden bg-stone-900">
+      <img className="absolute inset-0 size-full object-cover object-top" src="/assets/home-cover.jpg" alt="카페에서 진지하게 대화하는 두 사람" />
+      <div className="absolute inset-0 bg-gradient-to-b from-black/15 via-black/10 to-black/80" />
+      <div className="absolute inset-x-0 bottom-0 p-6 text-white">
+        <Badge variant="secondary" className="mb-4">Witness Lab</Badge>
+        <h2 className="text-3xl font-black leading-tight">복음을 전하는 대화,<br />먼저 연습하세요</h2>
+        <p className="mt-3 leading-7 text-white/85">복음 전도가 망설여질 때, 실제 대화 전에 안전하게 연습해보세요.</p>
+        {state.hasUser ? <p className="mt-5 text-sm text-white/70">{state.auth.user.profile?.name || state.auth.user.displayName}님, 이어서 훈련할 수 있습니다.</p> : null}
+      </div>
+    </div>
+  );
+}
+
+function LoginScreen({ state, actions }) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>로그인</CardTitle>
+        <CardDescription>훈련 기록과 피드백을 계정에 저장하려면 먼저 로그인해야 합니다.</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-3">
+        <Button asChild variant="outline"><a href="/auth/google">Google로 계속하기</a></Button>
+        <Button asChild variant="secondary"><a href="/auth/kakao">카카오로 계속하기</a></Button>
+        {state.auth.devLoginEnabled ? <Button onClick={actions.devLogin}>개발용 로그인</Button> : null}
+        {state.errors.auth ? <Alert variant="destructive"><AlertCircle /><AlertTitle>로그인 실패</AlertTitle><AlertDescription>{state.errors.auth}</AlertDescription></Alert> : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ProfileScreen({ state, actions }) {
+  const update = (patch) => actions.setProfileForm((value) => ({ ...value, ...patch }));
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>기본 정보 입력</CardTitle>
+        <CardDescription>무분별한 사용을 줄이고 개인 훈련 기록을 구분하기 위한 최소 정보입니다.</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-4">
+        <div className="grid gap-2"><Label htmlFor="profile-name">이름</Label><Input id="profile-name" value={state.profileForm.name} onChange={(event) => update({ name: event.target.value })} /></div>
+        <div className="grid gap-2"><Label htmlFor="profile-age">나이</Label><Input id="profile-age" type="number" min="10" max="99" value={state.profileForm.age} onChange={(event) => update({ age: event.target.value })} /></div>
+        <SelectControl id="profile-gender" label="성별" value={state.profileForm.gender} onChange={(gender) => update({ gender })} placeholder="성별 선택" options={[{ value: "남성", label: "남성" }, { value: "여성", label: "여성" }]} />
+        <div className="grid gap-2"><Label htmlFor="profile-church">소속 교회</Label><Input id="profile-church" value={state.profileForm.church} onChange={(event) => update({ church: event.target.value })} /></div>
+        <div className="grid gap-2"><Label htmlFor="profile-use">사용 용도</Label><Input id="profile-use" value={state.profileForm.useCase} onChange={(event) => update({ useCase: event.target.value })} placeholder="CBF 활동 / 청년 활동 / 개인 전도 훈련" /></div>
+        {state.errors.profile ? <Alert variant="destructive"><AlertCircle /><AlertTitle>입력 확인</AlertTitle><AlertDescription>{state.errors.profile}</AlertDescription></Alert> : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+function PersonaScreen({ state, actions }) {
+  return (
+    <div className="grid gap-3">
+      {state.personas.map((persona) => (
+        <button
+          key={persona.id}
+          type="button"
+          className={cn("flex items-center gap-3 rounded-2xl border bg-card p-3 text-left shadow-sm transition", state.selectedPersonaId === persona.id && "border-primary ring-2 ring-primary/20")}
+          onClick={() => actions.setSelectedPersonaId(persona.id)}
+        >
+          <Avatar className="size-14 rounded-2xl">
+            <AvatarImage src={personaImages[persona.id]} alt={persona.name} />
+            <AvatarFallback>{persona.name.slice(0, 1)}</AvatarFallback>
+          </Avatar>
+          <span className="min-w-0">
+            <strong className="block truncate">{persona.name}</strong>
+            <span className="block text-sm text-muted-foreground">{persona.title}</span>
+          </span>
+          {state.selectedPersonaId === persona.id ? <Badge className="ml-auto">선택</Badge> : null}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ContextScreen({ state, actions }) {
+  const update = (patch) => {
+    actions.setContextForm((value) => ({ ...value, ...patch }));
+    actions.setReviewConfirmed(false);
+  };
+  return (
+    <div className="grid gap-4">
+      {state.contextForm.setting ? <img className="aspect-[16/9] w-full rounded-2xl object-cover" src={settingImages[state.contextForm.setting]} alt="선택한 대화 상황" /> : null}
+      <Card>
+        <CardContent className="grid gap-4 pt-6">
+          <SelectControl id="relationship" label="관계" value={state.contextForm.relationship} onChange={(relationship) => update({ relationship })} placeholder="관계 선택" options={Object.entries(relationshipText).map(([value, label]) => ({ value, label }))} />
+          <SelectControl id="setting" label="상황" value={state.contextForm.setting} onChange={(setting) => update({ setting })} placeholder="상황 선택" options={Object.entries(settingText).map(([value, label]) => ({ value, label }))} />
+          <SelectControl id="goal" label="훈련 초점" value={state.contextForm.goal} onChange={(goal) => update({ goal })} placeholder="훈련 초점 선택" options={Object.entries(goalText).map(([value, label]) => ({ value, label }))} />
+          {state.errors.context ? <Alert variant="destructive"><AlertCircle /><AlertTitle>상황 설정 필요</AlertTitle><AlertDescription>{state.errors.context}</AlertDescription></Alert> : null}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function ReviewScreen({ state }) {
+  const persona = state.currentPersona;
+  const labels = sessionLabels(state.currentSession, state.personas);
+  if (!persona) return null;
+  return (
+    <div className="grid gap-4">
+      <Card>
+        <CardHeader>
+          <CardTitle>선택한 훈련</CardTitle>
+          <CardDescription>아래 내용을 확인하고 한 번 더 누르면 시작합니다.</CardDescription>
+          <CardAction>{state.reviewConfirmed ? <Badge><CheckCircle2 data-icon="inline-start" />확인됨</Badge> : <Badge variant="outline">확인 필요</Badge>}</CardAction>
+        </CardHeader>
+        <CardContent className="grid gap-3 text-sm">
+          <p><b>페르소나</b> {labels.persona}</p>
+          <p><b>관계</b> {labels.relationship}</p>
+          <p><b>상황</b> {labels.setting}</p>
+          <p><b>훈련 초점</b> {labels.goal}</p>
+        </CardContent>
+      </Card>
+      <Card>
+        <img className="aspect-video w-full rounded-t-xl object-cover" src={personaImages[persona.id]} alt={`${persona.name} 프로필`} />
+        <CardHeader>
+          <CardTitle>{persona.name}</CardTitle>
+          <CardDescription>{persona.shortDescription}</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4">
+          <InfoList title="내면 갈등" items={persona.innerConflicts?.slice(0, 3)} />
+          <div className="flex flex-wrap gap-2">{persona.gospelBarriers?.map((item) => <Badge key={item} variant="secondary">{item}</Badge>)}</div>
+          <blockquote className="rounded-xl bg-muted p-3 text-sm">"{persona.sampleLines?.[0]}"</blockquote>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function InfoList({ title, items = [] }) {
+  return (
+    <div className="grid gap-2">
+      <h3 className="text-sm font-black text-primary">{title}</h3>
+      <ul className="grid gap-1 text-sm text-muted-foreground">
+        {items.map((item) => <li key={item}>• {item}</li>)}
+      </ul>
+    </div>
+  );
+}
+
+function ChatScreen({ state }) {
+  const listRef = useRef(null);
+  const persona = state.currentPersona;
+  const labels = sessionLabels(state.currentSession, state.personas);
+  useEffect(() => {
+    listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
+  }, [state.messages, state.waitingForAssistant]);
+  return (
+    <div ref={listRef} className="flex h-full min-h-[520px] flex-col gap-3 overflow-y-auto rounded-2xl bg-muted p-2">
+      <div className="rounded-full bg-background/80 px-3 py-2 text-center text-xs font-black text-muted-foreground">
+        {labels.persona} · {labels.relationship} · {labels.setting}
+      </div>
+      {state.messages.map((message, index) => (
+        <MessageBubble key={`${message.role}-${index}`} message={message} persona={persona} />
+      ))}
+      {state.waitingForAssistant && persona ? (
+        <MessageBubble message={{ role: "assistant", content: "응답을 작성하는 중..." }} persona={persona} typing />
+      ) : null}
+    </div>
+  );
+}
+
+function MessageBubble({ message, persona, typing }) {
+  const isAssistant = message.role === "assistant";
+  const isSystem = message.role === "system";
+  return (
+    <article className={cn("grid max-w-[88%] gap-1", isAssistant && "grid-cols-[34px_minmax(0,1fr)] self-start", message.role === "user" && "self-end", isSystem && "self-center")}>
+      {isAssistant ? (
+        <Avatar className="row-span-2 size-8 rounded-xl">
+          <AvatarImage src={personaImages[persona?.id]} alt={persona?.name || "페르소나"} />
+          <AvatarFallback>{persona?.name?.slice(0, 1) || "AI"}</AvatarFallback>
+        </Avatar>
+      ) : null}
+      {!isSystem ? <span className="px-1 text-xs font-black text-muted-foreground">{isAssistant ? persona?.name : "나"}</span> : null}
+      <div className={cn("whitespace-pre-wrap rounded-2xl bg-background px-3 py-2 text-sm leading-6 shadow-sm", message.role === "user" && "rounded-br-md bg-yellow-300 text-stone-950", isAssistant && "rounded-bl-md", isSystem && "bg-amber-50 text-amber-900")}>
+        {typing ? <span className="animate-pulse">{message.content}</span> : message.content}
+      </div>
+    </article>
+  );
+}
+
+function ChatComposer({ state, actions }) {
+  const [draft, setDraft] = useState("");
+  const userTurns = state.messages.filter((message) => message.role === "user").length;
+  const assistantTurns = state.messages.filter((message) => message.role === "assistant").length;
+  const labels = sessionLabels(state.currentSession, state.personas);
+  const canSend = draft.trim() && !state.isBusy && state.sessionStarted;
+  const canFinish = userTurns > 0 && !state.isBusy && state.sessionStarted;
+  const submit = (event) => {
+    event.preventDefault();
+    if (!canSend) return;
+    void actions.submitMessage(draft);
+    setDraft("");
+  };
+  return (
+    <form className="grid grid-cols-[minmax(0,1fr)_64px] gap-2 border-t bg-background/95 p-2" onSubmit={submit}>
+      <div className="col-span-full grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2">
+        <Drawer>
+          <DrawerTrigger asChild><Button type="button" variant="secondary" size="sm">상황 보기</Button></DrawerTrigger>
+          <DrawerContent>
+            <div className="mx-auto w-full max-w-[480px]">
+              <DrawerHeader>
+                <DrawerTitle>{labels.persona}</DrawerTitle>
+                <DrawerDescription>{labels.relationship} · {labels.setting}</DrawerDescription>
+              </DrawerHeader>
+              <div className="grid gap-3 px-4 pb-6 text-sm">
+                <Badge variant="outline">훈련 초점: {labels.goal}</Badge>
+                <p className="text-muted-foreground">피드백은 한 번 이상 답한 뒤 받을 수 있습니다. 진행 중에는 뒤로가기를 막아 실수로 대화를 끊지 않습니다.</p>
+              </div>
+            </div>
+          </DrawerContent>
+        </Drawer>
+        <span className="truncate text-center text-xs font-black text-muted-foreground">{userTurns}턴 진행 · {assistantTurns}개 응답</span>
+        <Popover>
+          <PopoverTrigger asChild><Button type="button" variant="outline" size="sm">전환 안내</Button></PopoverTrigger>
+          <PopoverContent align="end" className="w-72">
+            <PopoverHeader>
+              <PopoverTitle>이동 보호</PopoverTitle>
+              <PopoverDescription>피드백 생성 중에는 전환 버튼이 비활성화되고, 진행 중 대화에서 다른 탭으로 갈 때 확인을 받습니다.</PopoverDescription>
+            </PopoverHeader>
+          </PopoverContent>
+        </Popover>
+      </div>
+      <Textarea
+        value={draft}
+        disabled={state.isBusy || !state.sessionStarted}
+        placeholder="상대에게 건넬 말"
+        className="min-h-11 resize-none"
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+            event.preventDefault();
+            if (canSend) {
+              void actions.submitMessage(draft);
+              setDraft("");
+            }
+          }
+        }}
+      />
+      <div className="grid gap-2">
+        <Button type="submit" disabled={!canSend}>전송</Button>
+        <Button type="button" variant="secondary" disabled={!canFinish} onClick={actions.finishSession}>피드백</Button>
+      </div>
+    </form>
+  );
+}
+
+function FeedbackScreen({ state, actions }) {
+  return (
+    <Card>
+      <img className="aspect-video w-full rounded-t-xl object-cover" src="/assets/feedback-report.jpg" alt="피드백 리포트" />
+      <CardHeader>
+        <CardTitle>피드백 리포트</CardTitle>
+        <CardDescription>{state.isBusy ? "대화 내용을 바탕으로 피드백을 생성하고 있습니다." : "훈련 결과를 확인하세요."}</CardDescription>
+      </CardHeader>
+      <CardContent className="feedback-content grid gap-3">
+        {state.shareNotice ? <Alert><CheckCircle2 /><AlertTitle>공유</AlertTitle><AlertDescription>{state.shareNotice}</AlertDescription></Alert> : null}
+        {state.latestFeedbackText ? <div dangerouslySetInnerHTML={{ __html: state.latestFeedbackHtml }} /> : <p className="text-muted-foreground">잠시만 기다려주세요.</p>}
+        {!state.isBusy && state.latestFeedbackText ? <Button variant="outline" onClick={actions.shareFeedback}>리포트 공유/복사</Button> : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+function HistoryScreen({ state, actions }) {
+  const [filters, setFilters] = useState(state.history.filters);
+  const stats = state.history.stats || {};
+  return (
+    <div className="grid gap-4">
+      <Card>
+        <CardHeader>
+          <CardTitle>성장 요약</CardTitle>
+          <CardDescription>반복 훈련과 최근 피드백을 요약합니다.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid grid-cols-2 gap-3">
+          <Metric label="전체 훈련" value={formatCount(stats.totalConversations)} />
+          <Metric label="이번 달" value={formatCount(stats.thisMonthConversations)} />
+          <p className="col-span-full text-sm text-muted-foreground"><b>최근 피드백</b> {stats.recentFeedbackThemes?.[0] || "피드백이 쌓이면 반복 포인트를 보여줍니다."}</p>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardContent className="grid gap-3 pt-6">
+          <Input value={filters.q || ""} placeholder="검색" onChange={(event) => setFilters((value) => ({ ...value, q: event.target.value }))} />
+          <SelectControl id="history-status" label="상태" value={filters.status || "all"} onChange={(status) => setFilters((value) => ({ ...value, status: status === "all" ? "" : status }))} placeholder="전체 상태" options={[{ value: "all", label: "전체 상태" }, { value: "finished", label: "완료" }, { value: "active", label: "진행 중" }]} />
+          <Button variant="secondary" onClick={() => actions.loadHistory(filters)}>필터 적용</Button>
+        </CardContent>
+      </Card>
+      {state.history.loading ? <p className="text-sm text-muted-foreground">기록을 불러오는 중입니다.</p> : null}
+      {state.history.items.length ? state.history.items.map((item) => <HistoryCard key={item.id} item={item} state={state} actions={actions} />) : <EmptyCard text="조건에 맞는 훈련 기록이 없습니다." />}
+    </div>
+  );
+}
+
+function HistoryCard({ item, state, actions }) {
+  const labels = sessionLabels(item.session, state.personas);
+  const active = item.status !== "finished";
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{labels.persona} · {active ? "진행 중" : "완료"}</CardTitle>
+        <CardDescription>{formatDate(item.createdAt)}</CardDescription>
+        <CardAction><Badge variant={active ? "secondary" : "outline"}>{active ? "진행" : "완료"}</Badge></CardAction>
+      </CardHeader>
+      <CardContent className="grid gap-3">
+        <p className="text-sm text-muted-foreground">{labels.relationship} · {labels.setting}</p>
+        <p className="text-sm"><b>훈련 초점</b> {labels.goal}</p>
+        {item.feedbackSummary ? <p className="rounded-xl bg-muted p-3 text-sm">{item.feedbackSummary}</p> : null}
+        <div className="grid grid-cols-2 gap-2">
+          <Button variant="outline" onClick={() => { actions.loadHistoryDetail(item.id); actions.goTo("historyDetail"); }}>상세</Button>
+          <Button variant="secondary" onClick={() => active ? actions.continueHistoryConversation(item.id) : actions.restoreSession(item.session)}>
+            {active ? "대화 이어가기" : "같은 설정으로 다시"}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function HistoryDetailScreen({ state, actions }) {
+  const item = state.history.detail;
+  if (!item) return <EmptyCard text="기록을 불러오는 중입니다." />;
+  const labels = sessionLabels(item.session, state.personas);
+  const active = item.status !== "finished";
+  return (
+    <div className="grid gap-4">
+      <Card>
+        <CardHeader>
+          <CardTitle>{labels.persona}</CardTitle>
+          <CardDescription>{formatDate(item.createdAt)}</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3 text-sm">
+          <p>{labels.relationship} · {labels.setting}</p>
+          <p><b>훈련 초점</b> {labels.goal}</p>
+          <Button onClick={() => active ? actions.resumeConversation(item) : actions.restoreSession(item.session)}>{active ? "대화 이어가기" : "같은 설정으로 다시 훈련"}</Button>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader><CardTitle>대화 전문</CardTitle></CardHeader>
+        <CardContent className="grid gap-2">
+          {(item.messages || []).map((message, index) => <p key={index} className={cn("rounded-xl bg-muted p-3 text-sm whitespace-pre-wrap", message.role === "user" && "bg-yellow-100")}><b>{message.role === "user" ? "나" : labels.persona}</b><br />{message.content}</p>)}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader><CardTitle>피드백 리포트</CardTitle></CardHeader>
+        <CardContent className="feedback-content" dangerouslySetInnerHTML={{ __html: item.feedbackText ? markdownToHtml(item.feedbackText) : "<p>아직 피드백이 없습니다.</p>" }} />
+      </Card>
+    </div>
+  );
+}
+
+function SettingsScreen({ state, actions }) {
+  const user = state.auth.user;
+  const profile = user?.profile || {};
+  const donation = state.appSettings?.donation || {};
+  return (
+    <div className="grid gap-4">
+      <Card>
+        <CardHeader><CardTitle>내 정보</CardTitle><CardDescription>{user?.email || "이메일 없음"}</CardDescription></CardHeader>
+        <CardContent className="grid gap-2 text-sm">
+          <p><b>이름</b> {profile.name || user?.displayName || "미입력"}</p>
+          <p><b>나이/성별</b> {profile.age || "미입력"} · {profile.gender || "미입력"}</p>
+          <p><b>소속 교회</b> {profile.church || "미입력"}</p>
+          <p><b>사용 용도</b> {profile.useCase || "미입력"}</p>
+          <Button variant="secondary" onClick={() => { actions.setProfileForm({ name: profile.name || user?.displayName || "", age: profile.age || "", gender: profile.gender || "", church: profile.church || "", useCase: profile.useCase || "" }); actions.goTo("profile"); }}>프로필 수정</Button>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader><CardTitle>{donation.title || "후원"}</CardTitle></CardHeader>
+        <CardContent className="grid gap-3 text-sm text-muted-foreground">
+          <p>{donation.body || "이 앱의 AI 호출 비용은 운영자가 부담합니다. 지속 운영을 돕고 싶다면 자발적으로 후원할 수 있습니다."}</p>
+          <Badge variant="outline">{donation.account || "후원 계좌 준비 중"}</Badge>
+        </CardContent>
+      </Card>
+      <Button variant="outline" onClick={actions.logout}>로그아웃</Button>
+    </div>
+  );
+}
+
+function AdminScreen({ state, actions }) {
+  if (!state.isAdmin) return <Alert variant="destructive"><AlertCircle /><AlertTitle>권한 없음</AlertTitle><AlertDescription>관리자 권한이 필요합니다.</AlertDescription></Alert>;
+  const data = state.admin.data;
+  const [filters, setFilters] = useState(state.admin.filters);
+  if (!data) return <EmptyCard text="관리자 데이터를 불러오는 중입니다." />;
+  const { summary, users, conversations, usage, settings } = data;
+  const cost = settings.settings?.cost || {};
+  const monthlyCost = Number(summary.estimatedMonthlyCostKrw || 0);
+  const monthlyBudget = Number(cost.monthlyBudgetKrw || 0);
+  const budgetRate = monthlyBudget ? percentOf(monthlyCost, monthlyBudget) : 0;
+  const warning = monthlyBudget && budgetRate >= 80;
+  return (
+    <div className="grid gap-4">
+      <Card className="border-primary/30 bg-primary text-primary-foreground">
+        <CardHeader>
+          <CardTitle>관리자가 바로 계산해야 할 지표</CardTitle>
+          <CardDescription className="text-primary-foreground/80">사용량, 비용, 완료율을 한 화면에서 확인합니다.</CardDescription>
+          <CardAction><Badge variant="secondary">{formatKrw(monthlyCost)}</Badge></CardAction>
+        </CardHeader>
+      </Card>
+      {warning ? <Alert variant="destructive"><AlertCircle /><AlertTitle>예산 경고</AlertTitle><AlertDescription>월 예산의 {formatPercent(budgetRate)}를 사용했습니다.</AlertDescription></Alert> : null}
+      <Card>
+        <CardContent className="grid gap-3 pt-6">
+          <Input placeholder="사용자/모델/훈련 검색" value={filters.q || ""} onChange={(event) => setFilters((value) => ({ ...value, q: event.target.value }))} />
+          <div className="grid grid-cols-2 gap-2">
+            <Input type="date" value={filters.from || ""} onChange={(event) => setFilters((value) => ({ ...value, from: event.target.value }))} />
+            <Input type="date" value={filters.to || ""} onChange={(event) => setFilters((value) => ({ ...value, to: event.target.value }))} />
+          </div>
+          <SelectControl id="admin-status" label="훈련 상태" value={filters.status || "all"} onChange={(status) => setFilters((value) => ({ ...value, status: status === "all" ? "" : status }))} placeholder="전체 상태" options={[{ value: "all", label: "전체 상태" }, { value: "finished", label: "완료" }, { value: "active", label: "진행 중" }]} />
+          <Button onClick={() => actions.loadAdmin(filters)}>필터 적용</Button>
+        </CardContent>
+      </Card>
+      <div className="grid grid-cols-2 gap-3">
+        <Metric label="가입 사용자" value={formatCount(summary.users)} detail={`프로필 완료 ${formatPercent(percentOf(summary.completedProfiles, summary.users))}`} />
+        <Metric label="전체 훈련" value={formatCount(summary.conversations)} detail={`완료율 ${formatPercent(percentOf(summary.finishedConversations, summary.conversations))}`} />
+        <Metric label="이번 달 훈련" value={formatCount(summary.thisMonthConversations)} detail={`오늘 ${formatCount(summary.todayConversations)}회`} />
+        <Metric label="예산 사용률" value={monthlyBudget ? formatPercent(budgetRate) : "미설정"} detail={monthlyBudget ? `남은 예산 ${formatKrw(Math.max(0, monthlyBudget - monthlyCost))}` : "월 예산 설정 필요"} />
+      </div>
+      <UsageChart usage={usage} />
+      <AdminTables state={state} users={users.users || []} conversations={conversations.conversations || []} usage={usage} />
+      <AdminSettings settings={settings.settings || {}} onSave={actions.saveAdminSettings} />
+    </div>
+  );
+}
+
+function Metric({ label, value, detail }) {
+  return (
+    <Card>
+      <CardContent className="grid gap-1 p-4">
+        <strong className="text-2xl font-black text-primary">{value || 0}</strong>
+        <span className="text-xs font-black text-muted-foreground">{label}</span>
+        {detail ? <small className="text-xs text-muted-foreground">{detail}</small> : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+function UsageChart({ usage }) {
+  const chartConfig = {
+    estimatedCostKrw: { label: "비용", color: "var(--chart-1)" },
+    events: { label: "이벤트", color: "var(--chart-2)" }
+  };
+  const rows = usage.byDay?.length ? usage.byDay : [{ date: "없음", estimatedCostKrw: 0, events: 0 }];
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>기간별 비용 그래프</CardTitle>
+        <CardDescription>필터 기간의 일자별 예상 비용입니다.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <ChartContainer config={chartConfig} className="h-[220px] w-full">
+          <BarChart accessibilityLayer data={rows}>
+            <CartesianGrid vertical={false} />
+            <XAxis dataKey="date" tickLine={false} axisLine={false} tickMargin={8} />
+            <ChartTooltip content={<ChartTooltipContent />} />
+            <Bar dataKey="estimatedCostKrw" fill="var(--color-estimatedCostKrw)" radius={4} />
+          </BarChart>
+        </ChartContainer>
+      </CardContent>
+    </Card>
+  );
+}
+
+function AdminTables({ state, users, conversations, usage }) {
+  return (
+    <Accordion type="multiple" defaultValue={["users", "conversations", "usage"]} className="grid gap-3">
+      <AdminAccordion value="users" title="사용자별 사용량">
+        <Table>
+          <TableHeader><TableRow><TableHead>사용자</TableHead><TableHead>훈련</TableHead><TableHead className="text-right">월 비용</TableHead></TableRow></TableHeader>
+          <TableBody>
+            {users.map((user) => (
+              <TableRow key={user.id}>
+                <TableCell><b>{user.profile?.name || user.displayName || user.email}</b><br /><span className="text-xs text-muted-foreground">{user.email}</span></TableCell>
+                <TableCell>{formatCount(user.conversationCount)}회</TableCell>
+                <TableCell className="text-right">{formatKrw(user.usage?.estimatedMonthlyCostKrw)}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </AdminAccordion>
+      <AdminAccordion value="conversations" title="최근 훈련">
+        <Table>
+          <TableHeader><TableRow><TableHead>훈련</TableHead><TableHead>상태</TableHead><TableHead className="text-right">메시지</TableHead></TableRow></TableHeader>
+          <TableBody>
+            {conversations.map((item) => {
+              const labels = sessionLabels(item.session, state.personas);
+              return (
+                <TableRow key={item.id}>
+                  <TableCell><b>{item.user?.name || item.user?.email || "사용자"}</b><br /><span className="text-xs text-muted-foreground">{labels.persona} · {labels.goal}</span></TableCell>
+                  <TableCell><Badge variant={item.status === "finished" ? "outline" : "secondary"}>{item.status === "finished" ? "완료" : "진행"}</Badge></TableCell>
+                  <TableCell className="text-right">{formatCount(item.messageCount)}</TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </AdminAccordion>
+      <AdminAccordion value="usage" title="최근 비용 이벤트">
+        <Table>
+          <TableHeader><TableRow><TableHead>이벤트</TableHead><TableHead>모델</TableHead><TableHead className="text-right">비용</TableHead></TableRow></TableHeader>
+          <TableBody>
+            {(usage.events || []).slice(0, 12).map((event) => (
+              <TableRow key={event.id}>
+                <TableCell>{usageEventLabel(event.eventType)}<br /><span className="text-xs text-muted-foreground">{formatDate(event.createdAt)}</span></TableCell>
+                <TableCell>{event.model}</TableCell>
+                <TableCell className="text-right">{formatKrw(event.estimatedCostKrw)}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </AdminAccordion>
+    </Accordion>
+  );
+}
+
+function AdminAccordion({ value, title, children }) {
+  return (
+    <AccordionItem value={value} className="rounded-xl border bg-card px-4">
+      <AccordionTrigger className="font-black">{title}</AccordionTrigger>
+      <AccordionContent>{children}</AccordionContent>
+    </AccordionItem>
+  );
+}
+
+function AdminSettings({ settings, onSave }) {
+  const [form, setForm] = useState(() => ({
+    donation: settings.donation || {},
+    cost: settings.cost || {},
+    ai: settings.ai || {}
+  }));
+  const [status, setStatus] = useState("");
+  const update = (path, value) => {
+    setForm((current) => {
+      const next = structuredClone(current);
+      const keys = path.split(".");
+      let target = next;
+      for (const key of keys.slice(0, -1)) target = target[key] ||= {};
+      target[keys.at(-1)] = value;
+      return next;
+    });
+  };
+  return (
+    <Accordion type="single" collapsible>
+      <AccordionItem value="settings" className="rounded-xl border bg-card px-4">
+        <AccordionTrigger className="font-black">운영 설정</AccordionTrigger>
+        <AccordionContent>
+          <div className="grid gap-3">
+            <Input value={form.donation.title || ""} onChange={(event) => update("donation.title", event.target.value)} placeholder="후원 제목" />
+            <Textarea value={form.donation.body || ""} onChange={(event) => update("donation.body", event.target.value)} placeholder="후원 안내" />
+            <Input value={form.donation.account || ""} onChange={(event) => update("donation.account", event.target.value)} placeholder="후원 계좌/링크" />
+            <Input type="number" value={form.cost.usdToKrw || 1380} onChange={(event) => update("cost.usdToKrw", Number(event.target.value || 1380))} placeholder="원/달러 환율" />
+            <Input type="number" value={form.cost.monthlyBudgetKrw || 0} onChange={(event) => update("cost.monthlyBudgetKrw", Number(event.target.value || 0))} placeholder="월 예산 기준" />
+            <Separator />
+            <Button onClick={async () => { await onSave({ ...form, donation: { ...form.donation, enabled: true } }); setStatus("저장했습니다."); }}>운영 설정 저장</Button>
+            {status ? <p className="text-sm text-muted-foreground">{status}</p> : null}
+          </div>
+        </AccordionContent>
+      </AccordionItem>
+    </Accordion>
+  );
+}
+
+function EmptyCard({ text }) {
+  return (
+    <Card>
+      <CardContent className="p-6 text-sm text-muted-foreground">{text}</CardContent>
+    </Card>
+  );
+}
+
+export default function App() {
+  const { state, actions } = useAppController();
+  let screen = null;
+  if (state.currentScreen === "home") screen = <HomeScreen state={state} />;
+  if (state.currentScreen === "login") screen = <LoginScreen state={state} actions={actions} />;
+  if (state.currentScreen === "profile") screen = <ProfileScreen state={state} actions={actions} />;
+  if (state.currentScreen === "persona") screen = <PersonaScreen state={state} actions={actions} />;
+  if (state.currentScreen === "context") screen = <ContextScreen state={state} actions={actions} />;
+  if (state.currentScreen === "review") screen = <ReviewScreen state={state} actions={actions} />;
+  if (state.currentScreen === "chat") screen = <ChatScreen state={state} actions={actions} />;
+  if (state.currentScreen === "feedback") screen = <FeedbackScreen state={state} actions={actions} />;
+  if (state.currentScreen === "history") screen = <HistoryScreen state={state} actions={actions} />;
+  if (state.currentScreen === "historyDetail") screen = <HistoryDetailScreen state={state} actions={actions} />;
+  if (state.currentScreen === "settings") screen = <SettingsScreen state={state} actions={actions} />;
+  if (state.currentScreen === "admin") screen = <AdminScreen state={state} actions={actions} />;
+  return (
+    <AppShell state={state} actions={actions}>
+      {state.errors.global ? <Alert className="mb-4" variant="destructive"><AlertCircle /><AlertTitle>오류</AlertTitle><AlertDescription>{state.errors.global}</AlertDescription></Alert> : null}
+      {screen}
+    </AppShell>
+  );
+}
