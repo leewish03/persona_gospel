@@ -50,7 +50,6 @@ import {
   SelectValue
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { useAppController } from "@/hooks/useAppController";
 import {
@@ -401,7 +400,7 @@ function ChatComposer({ state, actions }) {
         </Drawer>
         <Popover>
           <PopoverTrigger asChild><Button type="button" variant="outline" size="sm" className="rounded-full">전환 안내</Button></PopoverTrigger>
-          <PopoverContent align="end" className="w-72">
+          <PopoverContent align="end" className="w-72 max-w-[calc(100vw-2rem)]">
             <PopoverHeader>
               <PopoverTitle>이동 보호</PopoverTitle>
               <PopoverDescription>피드백 생성 중에는 전환 버튼이 비활성화되고, 진행 중 대화에서 다른 탭으로 갈 때 확인을 받습니다.</PopoverDescription>
@@ -658,57 +657,80 @@ function AdminTables({ state, users, conversations, usage }) {
   return (
     <Accordion type="multiple" defaultValue={["users", "conversations", "usage"]} className="grid gap-3">
       <AdminAccordion value="users" title="사용자별 사용량">
-        <div className="overflow-x-auto rounded-xl border">
-          <Table>
-            <TableHeader><TableRow><TableHead className="min-w-[160px]">사용자</TableHead><TableHead>훈련</TableHead><TableHead className="min-w-[96px] text-right">월 비용</TableHead></TableRow></TableHeader>
-            <TableBody>
-              {users.map((user) => (
-                <TableRow key={user.id}>
-                  <TableCell><b>{user.profile?.name || user.displayName || user.email}</b><br /><span className="text-xs text-muted-foreground">{user.email}</span></TableCell>
-                  <TableCell>{formatCount(user.conversationCount)}회</TableCell>
-                  <TableCell className="text-right font-semibold">{formatKrw(user.usage?.estimatedMonthlyCostKrw)}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+        <div className="grid gap-2">
+          {users.map((user) => (
+            <AdminListRow
+              key={user.id}
+              title={user.profile?.name || user.displayName || user.email}
+              subtitle={user.email}
+              items={[
+                ["훈련", `${formatCount(user.conversationCount)}회`],
+                ["월 비용", formatKrw(user.usage?.estimatedMonthlyCostKrw)]
+              ]}
+            />
+          ))}
+          {!users.length ? <p className="rounded-xl border bg-muted/40 p-3 text-sm text-muted-foreground">사용자가 없습니다.</p> : null}
         </div>
       </AdminAccordion>
       <AdminAccordion value="conversations" title="최근 훈련">
-        <div className="overflow-x-auto rounded-xl border">
-          <Table>
-            <TableHeader><TableRow><TableHead className="min-w-[180px]">훈련</TableHead><TableHead>상태</TableHead><TableHead className="min-w-[72px] text-right">메시지</TableHead></TableRow></TableHeader>
-            <TableBody>
-              {conversations.map((item) => {
-                const labels = sessionLabels(item.session, state.personas);
-                return (
-                  <TableRow key={item.id}>
-                    <TableCell><b>{item.user?.name || item.user?.email || "사용자"}</b><br /><span className="text-xs text-muted-foreground">{labels.persona} · {labels.goal}</span></TableCell>
-                    <TableCell><Badge variant={item.status === "finished" ? "outline" : "secondary"}>{item.status === "finished" ? "완료" : "진행"}</Badge></TableCell>
-                    <TableCell className="text-right font-semibold">{formatCount(item.messageCount)}</TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
+        <div className="grid gap-2">
+          {conversations.map((item) => {
+            const labels = sessionLabels(item.session, state.personas);
+            return (
+              <AdminListRow
+                key={item.id}
+                title={item.user?.name || item.user?.email || "사용자"}
+                subtitle={`${labels.persona} · ${labels.goal}`}
+                badge={<Badge variant={item.status === "finished" ? "outline" : "secondary"}>{item.status === "finished" ? "완료" : "진행"}</Badge>}
+                items={[
+                  ["관계/상황", `${labels.relationship} · ${labels.setting}`],
+                  ["메시지", `${formatCount(item.messageCount)}개`]
+                ]}
+              />
+            );
+          })}
+          {!conversations.length ? <p className="rounded-xl border bg-muted/40 p-3 text-sm text-muted-foreground">훈련 기록이 없습니다.</p> : null}
         </div>
       </AdminAccordion>
       <AdminAccordion value="usage" title="최근 비용 이벤트">
-        <div className="overflow-x-auto rounded-xl border">
-          <Table>
-            <TableHeader><TableRow><TableHead className="min-w-[140px]">이벤트</TableHead><TableHead className="min-w-[120px]">모델</TableHead><TableHead className="min-w-[86px] text-right">비용</TableHead></TableRow></TableHeader>
-            <TableBody>
-              {(usage.events || []).slice(0, 12).map((event) => (
-                <TableRow key={event.id}>
-                  <TableCell>{usageEventLabel(event.eventType)}<br /><span className="text-xs text-muted-foreground">{formatDate(event.createdAt)}</span></TableCell>
-                  <TableCell>{event.model}</TableCell>
-                  <TableCell className="text-right font-semibold">{formatKrw(event.estimatedCostKrw)}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+        <div className="grid gap-2">
+          {(usage.events || []).slice(0, 12).map((event) => (
+            <AdminListRow
+              key={event.id}
+              title={usageEventLabel(event.eventType)}
+              subtitle={formatDate(event.createdAt)}
+              items={[
+                ["모델", event.model || "모델 미기록"],
+                ["비용", formatKrw(event.estimatedCostKrw)]
+              ]}
+            />
+          ))}
+          {!usage.events?.length ? <p className="rounded-xl border bg-muted/40 p-3 text-sm text-muted-foreground">사용량 이벤트가 없습니다.</p> : null}
         </div>
       </AdminAccordion>
     </Accordion>
+  );
+}
+
+function AdminListRow({ title, subtitle, badge, items = [] }) {
+  return (
+    <article className="grid min-w-0 gap-3 rounded-2xl border bg-background p-3">
+      <div className="flex min-w-0 items-start justify-between gap-2">
+        <div className="min-w-0">
+          <strong className="block truncate text-sm">{title}</strong>
+          {subtitle ? <span className="block break-words text-xs leading-5 text-muted-foreground">{subtitle}</span> : null}
+        </div>
+        {badge ? <div className="shrink-0">{badge}</div> : null}
+      </div>
+      <div className="grid gap-2">
+        {items.map(([label, value]) => (
+          <div key={label} className="grid min-w-0 grid-cols-[84px_minmax(0,1fr)] gap-2 rounded-xl bg-muted/60 px-3 py-2 text-sm">
+            <span className="font-black text-muted-foreground">{label}</span>
+            <span className="min-w-0 break-words text-right font-semibold">{value}</span>
+          </div>
+        ))}
+      </div>
+    </article>
   );
 }
 
