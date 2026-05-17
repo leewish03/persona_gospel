@@ -23,7 +23,8 @@ const state = {
   adminLoaded: false,
   reviewScrolled: false,
   keyboardOpen: false,
-  inputFocused: false
+  inputFocused: false,
+  chatToolPanelOpen: false
 };
 
 const els = {
@@ -60,6 +61,11 @@ const els = {
   adminPanel: document.querySelector("#adminPanel"),
   logoutButton: document.querySelector("#logoutButton"),
   chatForm: document.querySelector("#chatForm"),
+  chatPluginBar: document.querySelector("#chatPluginBar"),
+  chatContextPlugin: document.querySelector("#chatContextPlugin"),
+  chatTurnCounter: document.querySelector("#chatTurnCounter"),
+  finishChatPlugin: document.querySelector("#finishChatPlugin"),
+  chatPluginPanel: document.querySelector("#chatPluginPanel"),
   messageInput: document.querySelector("#messageInput"),
   sendMessage: document.querySelector("#sendMessage"),
   bottomBar: document.querySelector("#bottomBar"),
@@ -256,6 +262,9 @@ function setBusy(isBusy, label = "") {
   els.resetButton.disabled = isBusy;
   els.messageInput.disabled = isBusy || !state.sessionStarted;
   els.sendMessage.disabled = isBusy || !state.sessionStarted;
+  els.finishChatPlugin.disabled =
+    isBusy || !state.sessionStarted || state.messages.filter((message) => message.role === "user").length < 1;
+  els.chatContextPlugin.disabled = isBusy || !state.sessionStarted;
   for (const el of [els.relationship, els.setting, els.goal]) {
     el.disabled = isBusy || state.sessionStarted;
   }
@@ -286,9 +295,7 @@ function renderChrome() {
 
   els.chatForm.hidden = state.currentScreen !== "chat";
   const actionless = ["login", "history", "historyDetail", "settings", "admin"].includes(state.currentScreen);
-  els.bottomBar.hidden =
-    actionless ||
-    (state.currentScreen === "chat" && state.sessionStarted && (state.messages.length < 2 || state.keyboardOpen));
+  els.bottomBar.hidden = actionless || (state.currentScreen === "chat" && state.sessionStarted);
   els.primaryAction.textContent = meta.action || "";
   els.secondaryAction.textContent = meta.secondary || "";
   els.secondaryAction.hidden = !meta.secondary;
@@ -429,6 +436,29 @@ function renderMessages() {
     els.messageList.append(node);
   }
   scrollMessagesToBottom();
+}
+
+function renderChatPluginBar() {
+  const session = currentSession();
+  const persona = currentPersona();
+  const labels = sessionLabels(session);
+  const userTurns = state.messages.filter((message) => message.role === "user").length;
+  const assistantTurns = state.messages.filter((message) => message.role === "assistant").length;
+  const canFinish = state.sessionStarted && userTurns > 0 && !state.isBusy;
+
+  els.chatTurnCounter.textContent = `${userTurns}턴 진행 · ${assistantTurns}개 응답`;
+  els.finishChatPlugin.disabled = !canFinish;
+  els.finishChatPlugin.textContent = canFinish ? "피드백 받기" : "대화 후 피드백";
+  els.chatContextPlugin.setAttribute("aria-expanded", String(state.chatToolPanelOpen));
+  els.chatPluginPanel.hidden = !state.chatToolPanelOpen;
+  els.chatPluginPanel.innerHTML = state.chatToolPanelOpen
+    ? `
+        <strong>${escapeHtml(persona?.name || labels.persona)}</strong>
+        <span>${escapeHtml(labels.relationship)} · ${escapeHtml(labels.setting)}</span>
+        <span>훈련 초점: ${escapeHtml(labels.goal)}</span>
+        <small>피드백은 한 번 이상 답한 뒤 받을 수 있습니다.</small>
+      `
+    : "";
 }
 
 function scrollMessagesToBottom() {
@@ -579,6 +609,41 @@ function formatDate(value) {
   return new Date(value).toLocaleString("ko-KR", { dateStyle: "medium", timeStyle: "short" });
 }
 
+function formatCount(value) {
+  return Number(value || 0).toLocaleString("ko-KR");
+}
+
+function formatKrw(value) {
+  return `${Math.round(Number(value || 0)).toLocaleString("ko-KR")}원`;
+}
+
+function formatPercent(value) {
+  if (!Number.isFinite(value)) return "0%";
+  return `${Math.round(value)}%`;
+}
+
+function percentOf(part, total) {
+  return total > 0 ? (Number(part || 0) / Number(total)) * 100 : 0;
+}
+
+function usageEventLabel(type = "") {
+  return {
+    chat_start: "대화 시작",
+    chat_message: "메시지",
+    feedback: "피드백"
+  }[type] || type || "기록";
+}
+
+function metricCard(label, value, detail = "") {
+  return `
+    <article>
+      <strong>${value}</strong>
+      <span>${label}</span>
+      ${detail ? `<small>${detail}</small>` : ""}
+    </article>
+  `;
+}
+
 function restoreSession(session = {}) {
   state.selectedPersonaId = session.personaId || state.selectedPersonaId;
   els.relationship.value = session.relationship || "";
@@ -613,6 +678,7 @@ function resumeConversation(conversation = {}) {
   state.latestFeedbackText = conversation.feedbackText || "";
   state.sessionStarted = conversation.status !== "finished";
   state.waitingForAssistant = false;
+  state.chatToolPanelOpen = false;
   state.reviewScrolled = false;
   els.feedbackPanel.innerHTML = "";
   renderContextImage();
@@ -632,6 +698,7 @@ function render() {
   renderContextImage();
   renderChatMeta();
   renderMessages();
+  renderChatPluginBar();
 }
 
 function updateReviewGate() {
@@ -733,6 +800,7 @@ async function startSession() {
   };
   state.sessionStarted = true;
   state.waitingForAssistant = true;
+  state.chatToolPanelOpen = false;
   state.messages = [];
   state.conversationId = "";
   els.feedbackPanel.innerHTML = "";
@@ -1100,28 +1168,61 @@ async function loadAdmin() {
     const donation = settings.settings?.donation || {};
     const cost = settings.settings?.cost || {};
     const ai = settings.settings?.ai || {};
+    const monthlyCost = Number(summary.estimatedMonthlyCostKrw || 0);
+    const monthlyBudget = Number(cost.monthlyBudgetKrw || 0);
+    const remainingBudget = monthlyBudget ? Math.max(0, monthlyBudget - monthlyCost) : 0;
+    const averageCost = summary.thisMonthConversations ? monthlyCost / summary.thisMonthConversations : 0;
+    const completionRate = percentOf(summary.finishedConversations, summary.conversations);
+    const profileRate = percentOf(summary.completedProfiles, summary.users);
+    const budgetRate = monthlyBudget ? percentOf(monthlyCost, monthlyBudget) : 0;
+    const usageTypes = usage.usage?.byType || {};
+    const recentUsage = usage.events || [];
     els.adminPanel.innerHTML = `
+      <section class="admin-hero">
+        <div>
+          <p>운영 대시보드</p>
+          <h3>관리자가 바로 계산해야 할 지표</h3>
+          <span>사용량, 비용, 완료율을 한 화면에서 확인합니다.</span>
+        </div>
+        <article>
+          <strong>${formatKrw(monthlyCost)}</strong>
+          <span>이번 달 예상 비용</span>
+        </article>
+      </section>
       <section class="admin-section">
-        <h3>개요</h3>
+        <div class="admin-section-heading">
+          <h3>계산 요약</h3>
+          <p>운영 판단에 필요한 핵심 수치를 자동 계산합니다.</p>
+        </div>
         <div class="admin-grid">
-          <article><strong>${summary.users}</strong><span>가입 사용자</span></article>
-          <article><strong>${summary.completedProfiles}</strong><span>프로필 완료</span></article>
-          <article><strong>${summary.conversations}</strong><span>전체 훈련</span></article>
-          <article><strong>${summary.finishedConversations}</strong><span>완료 훈련</span></article>
-          <article><strong>${summary.thisMonthConversations}</strong><span>이번 달 훈련</span></article>
-          <article><strong>${Math.round(summary.estimatedMonthlyCostKrw || 0).toLocaleString("ko-KR")}원</strong><span>이번 달 예상 비용</span></article>
+          ${metricCard("가입 사용자", formatCount(summary.users), `프로필 완료 ${formatPercent(profileRate)}`)}
+          ${metricCard("전체 훈련", formatCount(summary.conversations), `완료율 ${formatPercent(completionRate)}`)}
+          ${metricCard("이번 달 훈련", formatCount(summary.thisMonthConversations), `오늘 ${formatCount(summary.todayConversations)}회`)}
+          ${metricCard("평균 비용", formatKrw(averageCost), "이번 달 훈련 1회 기준")}
+          ${metricCard("예산 사용률", monthlyBudget ? formatPercent(budgetRate) : "미설정", monthlyBudget ? `남은 예산 ${formatKrw(remainingBudget)}` : "월 예산을 설정하세요")}
+          ${metricCard("토큰 합계", formatCount((usage.usage?.monthlyInputTokens || 0) + (usage.usage?.monthlyOutputTokens || 0)), "입력+출력 토큰")}
         </div>
       </section>
       <section class="admin-section">
-        <h3>사용량</h3>
+        <div class="admin-section-heading">
+          <h3>사용량</h3>
+          <p>AI 호출 종류별 횟수와 토큰을 나눠 봅니다.</p>
+        </div>
         <div class="usage-panel">
-          <p>대화 시작 ${usage.usage.byType.chat_start || 0}회 · 메시지 ${usage.usage.byType.chat_message || 0}회 · 피드백 ${usage.usage.byType.feedback || 0}회</p>
-          <p>입력 ${usage.usage.monthlyInputTokens.toLocaleString("ko-KR")} tokens · 출력 ${usage.usage.monthlyOutputTokens.toLocaleString("ko-KR")} tokens</p>
-          <p>월 예산 기준 ${Number(cost.monthlyBudgetKrw || 0).toLocaleString("ko-KR")}원</p>
+          <div class="usage-breakdown">
+            <span><b>${formatCount(usageTypes.chat_start)}</b>대화 시작</span>
+            <span><b>${formatCount(usageTypes.chat_message)}</b>메시지</span>
+            <span><b>${formatCount(usageTypes.feedback)}</b>피드백</span>
+          </div>
+          <p>입력 ${formatCount(usage.usage?.monthlyInputTokens)} tokens · 출력 ${formatCount(usage.usage?.monthlyOutputTokens)} tokens</p>
+          <p>월 예산 ${monthlyBudget ? formatKrw(monthlyBudget) : "미설정"} · 예상 비용 ${formatKrw(monthlyCost)}</p>
         </div>
       </section>
       <section class="admin-section">
-        <h3>사용자</h3>
+        <div class="admin-section-heading">
+          <h3>최근 사용자</h3>
+          <p>프로필, 소속, 훈련 횟수를 압축해서 봅니다.</p>
+        </div>
         <div class="admin-table">
           ${
             users.users.length
@@ -1142,7 +1243,10 @@ async function loadAdmin() {
         </div>
       </section>
       <section class="admin-section">
-        <h3>최근 훈련</h3>
+        <div class="admin-section-heading">
+          <h3>최근 훈련</h3>
+          <p>개인 대화 전문은 열지 않고 운영 흐름만 확인합니다.</p>
+        </div>
         <div class="admin-table">
           ${
             conversations.conversations.length
@@ -1151,10 +1255,10 @@ async function loadAdmin() {
                     const labels = sessionLabels(item.session);
                     return `
                 <article>
-                  <strong>${escapeHtml(item.user?.name || item.user?.email || "사용자")} · ${labels.persona}</strong>
+                  <strong>${escapeHtml(item.user?.name || item.user?.email || "사용자")} · ${escapeHtml(labels.persona)}</strong>
                   <span>${formatDate(item.createdAt)}</span>
-                  <span>${labels.relationship} · ${labels.setting}</span>
-                  <span>${labels.goal} · 메시지 ${item.messageCount}개</span>
+                  <span>${escapeHtml(labels.relationship)} · ${escapeHtml(labels.setting)}</span>
+                  <span>${escapeHtml(labels.goal)} · 메시지 ${formatCount(item.messageCount)}개</span>
                 </article>
               `;
                   })
@@ -1164,21 +1268,46 @@ async function loadAdmin() {
         </div>
       </section>
       <section class="admin-section">
-        <h3>운영 설정</h3>
-        <form class="admin-settings-form" id="adminSettingsForm">
-          <h4>모델 설정</h4>
-          <p class="admin-note">API 키는 환경변수로 관리합니다. OpenAI는 OPENAI_API_KEY, Claude는 ANTHROPIC_API_KEY를 사용합니다.</p>
-          ${modelSettingsFields("chat", "대화 모델", ai.chat || {})}
-          ${modelSettingsFields("feedback", "피드백 모델", ai.feedback || {})}
-          <h4>후원/비용 설정</h4>
-          <label class="field"><span>후원 제목</span><input name="title" value="${escapeHtml(donation.title || "후원")}" /></label>
-          <label class="field"><span>후원 안내</span><textarea name="body" rows="4">${escapeHtml(donation.body || "")}</textarea></label>
-          <label class="field"><span>후원 계좌/링크</span><input name="account" value="${escapeHtml(donation.account || "")}" placeholder="나중에 입력" /></label>
-          <label class="field"><span>원/달러 환율</span><input name="usdToKrw" type="number" value="${Number(cost.usdToKrw || 1380)}" /></label>
-          <label class="field"><span>월 예산 기준</span><input name="monthlyBudgetKrw" type="number" value="${Number(cost.monthlyBudgetKrw || 0)}" /></label>
-          <button class="primary-button" type="submit">운영 설정 저장</button>
-          <p class="form-status" id="adminSettingsStatus" role="status"></p>
-        </form>
+        <div class="admin-section-heading">
+          <h3>최근 비용 이벤트</h3>
+          <p>모델별 호출 비용을 빠르게 확인합니다.</p>
+        </div>
+        <div class="admin-table compact">
+          ${
+            recentUsage.length
+              ? recentUsage
+                  .map(
+                    (event) => `
+                <article>
+                  <strong>${usageEventLabel(event.eventType)} · ${formatKrw(event.estimatedCostKrw)}</strong>
+                  <span>${escapeHtml(event.model || "모델 미기록")} · 입력 ${formatCount(event.inputTokens)} / 출력 ${formatCount(event.outputTokens)}</span>
+                  <span>${formatDate(event.createdAt)}</span>
+                </article>
+              `
+                  )
+                  .join("")
+              : `<p class="admin-empty">아직 사용량 이벤트가 없습니다.</p>`
+          }
+        </div>
+      </section>
+      <section class="admin-section">
+        <details class="admin-settings-details">
+          <summary>운영 설정 열기</summary>
+          <form class="admin-settings-form" id="adminSettingsForm">
+            <h4>모델 설정</h4>
+            <p class="admin-note">API 키는 환경변수로 관리합니다. OpenAI는 OPENAI_API_KEY, Claude는 ANTHROPIC_API_KEY를 사용합니다.</p>
+            ${modelSettingsFields("chat", "대화 모델", ai.chat || {})}
+            ${modelSettingsFields("feedback", "피드백 모델", ai.feedback || {})}
+            <h4>후원/비용 설정</h4>
+            <label class="field"><span>후원 제목</span><input name="title" value="${escapeHtml(donation.title || "후원")}" /></label>
+            <label class="field"><span>후원 안내</span><textarea name="body" rows="4">${escapeHtml(donation.body || "")}</textarea></label>
+            <label class="field"><span>후원 계좌/링크</span><input name="account" value="${escapeHtml(donation.account || "")}" placeholder="나중에 입력" /></label>
+            <label class="field"><span>원/달러 환율</span><input name="usdToKrw" type="number" value="${Number(cost.usdToKrw || 1380)}" /></label>
+            <label class="field"><span>월 예산 기준</span><input name="monthlyBudgetKrw" type="number" value="${Number(cost.monthlyBudgetKrw || 0)}" /></label>
+            <button class="primary-button" type="submit">운영 설정 저장</button>
+            <p class="form-status" id="adminSettingsStatus" role="status"></p>
+          </form>
+        </details>
       </section>
     `;
     bindAdminEvents();
@@ -1321,6 +1450,7 @@ function resetAll() {
   state.latestFeedbackText = "";
   state.sessionStarted = false;
   state.waitingForAssistant = false;
+  state.chatToolPanelOpen = false;
   els.feedbackPanel.innerHTML = "";
   resetContextSelections();
   goTo("home", { replace: true });
@@ -1438,6 +1568,13 @@ els.resetButton.addEventListener("click", resetAll);
 els.primaryAction.addEventListener("click", handlePrimaryAction);
 els.secondaryAction.addEventListener("click", handleSecondaryAction);
 els.chatForm.addEventListener("submit", sendMessage);
+els.chatContextPlugin.addEventListener("click", () => {
+  state.chatToolPanelOpen = !state.chatToolPanelOpen;
+  renderChatPluginBar();
+});
+els.finishChatPlugin.addEventListener("click", () => {
+  void finishSession();
+});
 els.messageInput.addEventListener("keydown", (event) => {
   if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
   event.preventDefault();

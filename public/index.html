@@ -163,6 +163,12 @@
       </section>
 
       <form id="chatForm" class="composer" hidden>
+        <div class="chat-plugin-bar" id="chatPluginBar" aria-label="대화 도구">
+          <button class="plugin-chip" id="chatContextPlugin" type="button" aria-expanded="false">상황 보기</button>
+          <span class="plugin-status" id="chatTurnCounter">0턴 진행</span>
+          <button class="plugin-chip plugin-primary" id="finishChatPlugin" type="button">피드백 받기</button>
+        </div>
+        <div class="chat-plugin-panel" id="chatPluginPanel" hidden></div>
         <textarea id="messageInput" rows="1" placeholder="상대에게 건넬 말" disabled></textarea>
         <button class="send-button" id="sendMessage" type="submit" disabled>전송</button>
       </form>
