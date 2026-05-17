@@ -90,6 +90,20 @@
   }
 }
 
+@layer components {
+  [data-slot="card"] {
+    @apply shadow-[0_10px_28px_rgba(23,33,31,0.08)];
+  }
+
+  [data-slot="drawer-content"] {
+    @apply rounded-t-3xl;
+  }
+
+  [data-slot="popover-content"] {
+    @apply rounded-2xl shadow-xl;
+  }
+}
+
 .feedback-content h2 {
   @apply mt-4 text-base font-black text-primary;
 }

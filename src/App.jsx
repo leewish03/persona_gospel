@@ -1,16 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
-  BarChart3,
   BookOpen,
   CheckCircle2,
   ChevronLeft,
   Home,
-  MessageCircle,
-  PieChart,
   Settings,
-  Shield,
-  UserRound
+  Shield
 } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, XAxis } from "recharts";
 
@@ -98,13 +94,13 @@ function AppShell({ state, actions, children }) {
   const showTabs = state.hasUser && state.profileComplete && !["login", "profile"].includes(state.currentScreen);
 
   return (
-    <main className="mx-auto grid h-dvh max-h-dvh w-full max-w-[480px] grid-rows-[auto_auto_minmax(0,1fr)_auto_auto] overflow-hidden bg-background shadow-2xl">
-      <header className="grid grid-cols-[44px_minmax(0,1fr)_54px] items-center gap-2 px-4 pb-3 pt-4">
+    <main className="mx-auto grid h-dvh max-h-dvh w-full max-w-[480px] grid-rows-[auto_auto_minmax(0,1fr)_auto_auto] overflow-hidden bg-background shadow-2xl ring-1 ring-border/60">
+      <header className="grid grid-cols-[44px_minmax(0,1fr)_58px] items-center gap-2 border-b bg-card/80 px-4 pb-3 pt-4 backdrop-blur">
         <Button
           variant="ghost"
           size="icon"
           aria-label="이전 단계"
-          className={cn(state.currentScreen === "home" && "invisible")}
+          className={cn("rounded-full disabled:bg-muted disabled:text-muted-foreground", state.currentScreen === "home" && "invisible")}
           disabled={state.isBusy || (state.currentScreen === "chat" && state.sessionStarted)}
           onClick={actions.previousScreen}
         >
@@ -117,7 +113,7 @@ function AppShell({ state, actions, children }) {
         <Button
           variant="ghost"
           size="sm"
-          className={cn("font-black", state.currentScreen === "home" && "invisible")}
+          className={cn("rounded-full font-black disabled:bg-muted disabled:text-muted-foreground", state.currentScreen === "home" && "invisible")}
           disabled={state.isBusy}
           onClick={actions.resetAll}
         >
@@ -128,7 +124,7 @@ function AppShell({ state, actions, children }) {
       <section className="min-h-0 overflow-y-auto p-4">{children}</section>
       {state.currentScreen === "chat" ? <ChatComposer state={state} actions={actions} /> : null}
       {showBottom ? (
-        <footer className={cn("grid gap-2 border-t bg-background/95 p-4", meta.secondary && "grid-cols-2")}>
+        <footer className={cn("grid gap-2 border-t bg-card/95 p-4 shadow-[0_-12px_32px_rgba(23,33,31,0.08)]", meta.secondary && "grid-cols-2")}>
           <Button disabled={state.isBusy || (state.currentScreen === "review" && !state.reviewConfirmed && false)} onClick={actions.handlePrimaryAction}>
             {primaryLabel}
           </Button>
@@ -152,7 +148,7 @@ function TabBar({ state, actions }) {
     ...(state.isAdmin ? [{ key: "admin", label: "관리", icon: Shield }] : [])
   ];
   return (
-    <nav className="grid auto-cols-fr grid-flow-col gap-2 border-t bg-background/95 px-3 py-2" aria-label="하단 내비게이션">
+    <nav className="grid auto-cols-fr grid-flow-col gap-2 border-t bg-card/95 px-3 py-2 shadow-[0_-10px_24px_rgba(23,33,31,0.08)]" aria-label="하단 내비게이션">
       {tabs.map((tab) => {
         const Icon = tab.icon;
         const active = tab.key === state.currentScreen || (tab.key === "home" && ["persona", "context", "review", "chat", "feedback"].includes(state.currentScreen));
@@ -161,7 +157,7 @@ function TabBar({ state, actions }) {
             key={tab.key}
             type="button"
             variant={active ? "secondary" : "ghost"}
-            className="h-14 flex-col gap-1 text-xs"
+            className={cn("h-14 flex-col gap-1 rounded-2xl text-xs font-black", active && "border border-primary/20 bg-primary text-primary-foreground shadow-sm hover:bg-primary/90")}
             disabled={state.isBusy}
             onClick={() => {
               if (tab.key === "home" && state.sessionStarted) actions.goTo("chat");
@@ -375,26 +371,36 @@ function ChatComposer({ state, actions }) {
     setDraft("");
   };
   return (
-    <form className="grid grid-cols-[minmax(0,1fr)_64px] gap-2 border-t bg-background/95 p-2" onSubmit={submit}>
-      <div className="col-span-full grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2">
+    <form className="grid grid-cols-[minmax(0,1fr)_68px] gap-2 border-t bg-card/95 p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] shadow-[0_-12px_32px_rgba(23,33,31,0.08)]" onSubmit={submit}>
+      <div className="col-span-full grid grid-cols-[1fr_auto] items-center gap-2">
         <Drawer>
-          <DrawerTrigger asChild><Button type="button" variant="secondary" size="sm">상황 보기</Button></DrawerTrigger>
+          <DrawerTrigger asChild><Button type="button" variant="secondary" size="sm" className="justify-self-start rounded-full">상황 보기</Button></DrawerTrigger>
           <DrawerContent>
             <div className="mx-auto w-full max-w-[480px]">
               <DrawerHeader>
                 <DrawerTitle>{labels.persona}</DrawerTitle>
-                <DrawerDescription>{labels.relationship} · {labels.setting}</DrawerDescription>
+                <DrawerDescription>현재 대화 설정을 확인합니다.</DrawerDescription>
               </DrawerHeader>
               <div className="grid gap-3 px-4 pb-6 text-sm">
-                <Badge variant="outline">훈련 초점: {labels.goal}</Badge>
-                <p className="text-muted-foreground">피드백은 한 번 이상 답한 뒤 받을 수 있습니다. 진행 중에는 뒤로가기를 막아 실수로 대화를 끊지 않습니다.</p>
+                <div className="grid gap-2 rounded-2xl border bg-muted/60 p-4">
+                  <span className="text-xs font-black text-muted-foreground">관계</span>
+                  <strong>{labels.relationship || "관계 미설정"}</strong>
+                </div>
+                <div className="grid gap-2 rounded-2xl border bg-muted/60 p-4">
+                  <span className="text-xs font-black text-muted-foreground">상황</span>
+                  <strong>{labels.setting || "상황 미설정"}</strong>
+                </div>
+                <div className="grid gap-2 rounded-2xl border bg-muted/60 p-4">
+                  <span className="text-xs font-black text-muted-foreground">훈련 초점</span>
+                  <strong>{labels.goal || "훈련 초점 미설정"}</strong>
+                </div>
+                <p className="rounded-2xl bg-primary/10 p-3 text-primary">피드백은 한 번 이상 답한 뒤 받을 수 있습니다. 진행 중에는 뒤로가기를 막아 실수로 대화를 끊지 않습니다.</p>
               </div>
             </div>
           </DrawerContent>
         </Drawer>
-        <span className="truncate text-center text-xs font-black text-muted-foreground">{userTurns}턴 진행 · {assistantTurns}개 응답</span>
         <Popover>
-          <PopoverTrigger asChild><Button type="button" variant="outline" size="sm">전환 안내</Button></PopoverTrigger>
+          <PopoverTrigger asChild><Button type="button" variant="outline" size="sm" className="rounded-full">전환 안내</Button></PopoverTrigger>
           <PopoverContent align="end" className="w-72">
             <PopoverHeader>
               <PopoverTitle>이동 보호</PopoverTitle>
@@ -402,12 +408,13 @@ function ChatComposer({ state, actions }) {
             </PopoverHeader>
           </PopoverContent>
         </Popover>
+        <span className="col-span-full rounded-full bg-muted px-3 py-1.5 text-center text-xs font-black text-muted-foreground">{userTurns}턴 진행 · {assistantTurns}개 응답</span>
       </div>
       <Textarea
         value={draft}
         disabled={state.isBusy || !state.sessionStarted}
         placeholder="상대에게 건넬 말"
-        className="min-h-11 resize-none"
+        className="min-h-12 resize-none rounded-2xl bg-background"
         onChange={(event) => setDraft(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
@@ -582,12 +589,18 @@ function AdminScreen({ state, actions }) {
       <Card>
         <CardContent className="grid gap-3 pt-6">
           <Input placeholder="사용자/모델/훈련 검색" value={filters.q || ""} onChange={(event) => setFilters((value) => ({ ...value, q: event.target.value }))} />
-          <div className="grid grid-cols-2 gap-2">
-            <Input type="date" value={filters.from || ""} onChange={(event) => setFilters((value) => ({ ...value, from: event.target.value }))} />
-            <Input type="date" value={filters.to || ""} onChange={(event) => setFilters((value) => ({ ...value, to: event.target.value }))} />
+          <div className="grid gap-3 rounded-2xl border bg-muted/40 p-3">
+            <div className="grid gap-2">
+              <Label htmlFor="admin-from">시작일</Label>
+              <Input id="admin-from" type="date" value={filters.from || ""} onChange={(event) => setFilters((value) => ({ ...value, from: event.target.value }))} />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="admin-to">종료일</Label>
+              <Input id="admin-to" type="date" value={filters.to || ""} onChange={(event) => setFilters((value) => ({ ...value, to: event.target.value }))} />
+            </div>
           </div>
           <SelectControl id="admin-status" label="훈련 상태" value={filters.status || "all"} onChange={(status) => setFilters((value) => ({ ...value, status: status === "all" ? "" : status }))} placeholder="전체 상태" options={[{ value: "all", label: "전체 상태" }, { value: "finished", label: "완료" }, { value: "active", label: "진행 중" }]} />
-          <Button onClick={() => actions.loadAdmin(filters)}>필터 적용</Button>
+          <Button className="rounded-full" onClick={() => actions.loadAdmin(filters)}>필터 적용</Button>
         </CardContent>
       </Card>
       <div className="grid grid-cols-2 gap-3">
@@ -628,10 +641,10 @@ function UsageChart({ usage }) {
         <CardDescription>필터 기간의 일자별 예상 비용입니다.</CardDescription>
       </CardHeader>
       <CardContent>
-        <ChartContainer config={chartConfig} className="h-[220px] w-full">
+        <ChartContainer config={chartConfig} className="h-[300px] min-h-[300px] w-full">
           <BarChart accessibilityLayer data={rows}>
             <CartesianGrid vertical={false} />
-            <XAxis dataKey="date" tickLine={false} axisLine={false} tickMargin={8} />
+            <XAxis dataKey="date" tickLine={false} axisLine={false} tickMargin={10} minTickGap={18} />
             <ChartTooltip content={<ChartTooltipContent />} />
             <Bar dataKey="estimatedCostKrw" fill="var(--color-estimatedCostKrw)" radius={4} />
           </BarChart>
@@ -645,49 +658,55 @@ function AdminTables({ state, users, conversations, usage }) {
   return (
     <Accordion type="multiple" defaultValue={["users", "conversations", "usage"]} className="grid gap-3">
       <AdminAccordion value="users" title="사용자별 사용량">
-        <Table>
-          <TableHeader><TableRow><TableHead>사용자</TableHead><TableHead>훈련</TableHead><TableHead className="text-right">월 비용</TableHead></TableRow></TableHeader>
-          <TableBody>
-            {users.map((user) => (
-              <TableRow key={user.id}>
-                <TableCell><b>{user.profile?.name || user.displayName || user.email}</b><br /><span className="text-xs text-muted-foreground">{user.email}</span></TableCell>
-                <TableCell>{formatCount(user.conversationCount)}회</TableCell>
-                <TableCell className="text-right">{formatKrw(user.usage?.estimatedMonthlyCostKrw)}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <div className="overflow-x-auto rounded-xl border">
+          <Table>
+            <TableHeader><TableRow><TableHead className="min-w-[160px]">사용자</TableHead><TableHead>훈련</TableHead><TableHead className="min-w-[96px] text-right">월 비용</TableHead></TableRow></TableHeader>
+            <TableBody>
+              {users.map((user) => (
+                <TableRow key={user.id}>
+                  <TableCell><b>{user.profile?.name || user.displayName || user.email}</b><br /><span className="text-xs text-muted-foreground">{user.email}</span></TableCell>
+                  <TableCell>{formatCount(user.conversationCount)}회</TableCell>
+                  <TableCell className="text-right font-semibold">{formatKrw(user.usage?.estimatedMonthlyCostKrw)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
       </AdminAccordion>
       <AdminAccordion value="conversations" title="최근 훈련">
-        <Table>
-          <TableHeader><TableRow><TableHead>훈련</TableHead><TableHead>상태</TableHead><TableHead className="text-right">메시지</TableHead></TableRow></TableHeader>
-          <TableBody>
-            {conversations.map((item) => {
-              const labels = sessionLabels(item.session, state.personas);
-              return (
-                <TableRow key={item.id}>
-                  <TableCell><b>{item.user?.name || item.user?.email || "사용자"}</b><br /><span className="text-xs text-muted-foreground">{labels.persona} · {labels.goal}</span></TableCell>
-                  <TableCell><Badge variant={item.status === "finished" ? "outline" : "secondary"}>{item.status === "finished" ? "완료" : "진행"}</Badge></TableCell>
-                  <TableCell className="text-right">{formatCount(item.messageCount)}</TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
+        <div className="overflow-x-auto rounded-xl border">
+          <Table>
+            <TableHeader><TableRow><TableHead className="min-w-[180px]">훈련</TableHead><TableHead>상태</TableHead><TableHead className="min-w-[72px] text-right">메시지</TableHead></TableRow></TableHeader>
+            <TableBody>
+              {conversations.map((item) => {
+                const labels = sessionLabels(item.session, state.personas);
+                return (
+                  <TableRow key={item.id}>
+                    <TableCell><b>{item.user?.name || item.user?.email || "사용자"}</b><br /><span className="text-xs text-muted-foreground">{labels.persona} · {labels.goal}</span></TableCell>
+                    <TableCell><Badge variant={item.status === "finished" ? "outline" : "secondary"}>{item.status === "finished" ? "완료" : "진행"}</Badge></TableCell>
+                    <TableCell className="text-right font-semibold">{formatCount(item.messageCount)}</TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
       </AdminAccordion>
       <AdminAccordion value="usage" title="최근 비용 이벤트">
-        <Table>
-          <TableHeader><TableRow><TableHead>이벤트</TableHead><TableHead>모델</TableHead><TableHead className="text-right">비용</TableHead></TableRow></TableHeader>
-          <TableBody>
-            {(usage.events || []).slice(0, 12).map((event) => (
-              <TableRow key={event.id}>
-                <TableCell>{usageEventLabel(event.eventType)}<br /><span className="text-xs text-muted-foreground">{formatDate(event.createdAt)}</span></TableCell>
-                <TableCell>{event.model}</TableCell>
-                <TableCell className="text-right">{formatKrw(event.estimatedCostKrw)}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <div className="overflow-x-auto rounded-xl border">
+          <Table>
+            <TableHeader><TableRow><TableHead className="min-w-[140px]">이벤트</TableHead><TableHead className="min-w-[120px]">모델</TableHead><TableHead className="min-w-[86px] text-right">비용</TableHead></TableRow></TableHeader>
+            <TableBody>
+              {(usage.events || []).slice(0, 12).map((event) => (
+                <TableRow key={event.id}>
+                  <TableCell>{usageEventLabel(event.eventType)}<br /><span className="text-xs text-muted-foreground">{formatDate(event.createdAt)}</span></TableCell>
+                  <TableCell>{event.model}</TableCell>
+                  <TableCell className="text-right font-semibold">{formatKrw(event.estimatedCostKrw)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
       </AdminAccordion>
     </Accordion>
   );
