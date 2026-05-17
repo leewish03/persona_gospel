@@ -815,6 +815,46 @@ textarea:focus {
   gap: 12px;
 }
 
+.admin-hero {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border-radius: 18px;
+  color: white;
+  background: linear-gradient(135deg, var(--teal-deep), #2b5d84);
+  box-shadow: 0 16px 34px rgba(17, 102, 92, 0.2);
+}
+
+.admin-hero p,
+.admin-hero h3,
+.admin-hero span {
+  margin: 0;
+}
+
+.admin-hero p {
+  font-size: 0.78rem;
+  font-weight: 900;
+  opacity: 0.82;
+}
+
+.admin-hero h3 {
+  margin: 4px 0 6px;
+  font-size: 1.28rem;
+  line-height: 1.25;
+}
+
+.admin-hero article {
+  display: grid;
+  gap: 2px;
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.admin-hero strong {
+  font-size: 1.55rem;
+}
+
 .history-summary-panel,
 .filter-bar,
 .history-detail-card {
@@ -988,8 +1028,20 @@ textarea:focus {
   box-shadow: 0 8px 20px rgba(23, 33, 31, 0.06);
 }
 
+.admin-section-heading {
+  display: grid;
+  gap: 3px;
+}
+
 .admin-section h3 {
   margin-bottom: 0;
+}
+
+.admin-section-heading p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.45;
 }
 
 .admin-grid article,
@@ -1009,7 +1061,31 @@ textarea:focus {
 }
 
 .usage-panel {
+  gap: 10px;
   line-height: 1.52;
+}
+
+.usage-breakdown {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.usage-breakdown span {
+  display: grid;
+  gap: 2px;
+  padding: 10px 8px;
+  border-radius: 12px;
+  background: #edf8f6;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-align: center;
+}
+
+.usage-breakdown b {
+  color: var(--teal-deep);
+  font-size: 1.12rem;
 }
 
 .usage-panel p {
@@ -1026,6 +1102,10 @@ textarea:focus {
   border: 1px solid var(--line);
   border-radius: 12px;
   background: #fffdfa;
+}
+
+.admin-table.compact article {
+  padding: 10px 12px;
 }
 
 .admin-empty {
@@ -1107,6 +1187,34 @@ textarea:focus {
   font-weight: 900;
 }
 
+.admin-grid small {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.admin-settings-details {
+  display: grid;
+  gap: 12px;
+}
+
+.admin-settings-details summary {
+  display: grid;
+  min-height: 46px;
+  align-items: center;
+  padding: 0 14px;
+  border-radius: 12px;
+  color: var(--teal-deep);
+  background: rgba(27, 128, 116, 0.1);
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.admin-settings-details[open] summary {
+  margin-bottom: 12px;
+}
+
 .composer {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 58px;
@@ -1115,6 +1223,67 @@ textarea:focus {
   padding: 7px 8px calc(7px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--line);
   background: rgba(255, 253, 250, 0.96);
+}
+
+.chat-plugin-bar,
+.chat-plugin-panel {
+  grid-column: 1 / -1;
+}
+
+.chat-plugin-bar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 7px;
+  align-items: center;
+}
+
+.plugin-chip {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid rgba(27, 128, 116, 0.18);
+  border-radius: 999px;
+  color: var(--teal-deep);
+  background: #edf8f6;
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.plugin-chip.plugin-primary {
+  color: white;
+  background: var(--teal);
+}
+
+.plugin-status {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 900;
+  overflow: hidden;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-plugin-panel {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid rgba(27, 128, 116, 0.16);
+  border-radius: 12px;
+  background: #edf8f6;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.chat-plugin-panel strong {
+  color: var(--teal-deep);
+  font-size: 0.9rem;
+}
+
+.chat-plugin-panel small {
+  color: #6b5a39;
+  font-weight: 800;
 }
 
 .composer textarea {
