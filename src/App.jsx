@@ -11,6 +11,16 @@ import {
 import { Bar, BarChart, CartesianGrid, XAxis } from "recharts";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle
+} from "@/components/ui/alert-dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,24 +32,8 @@ import {
   AccordionItem,
   AccordionTrigger
 } from "@/components/ui/accordion";
-import {
-  Drawer,
-  DrawerContent,
-  DrawerDescription,
-  DrawerHeader,
-  DrawerTitle,
-  DrawerTrigger
-} from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Popover,
-  PopoverContent,
-  PopoverDescription,
-  PopoverHeader,
-  PopoverTitle,
-  PopoverTrigger
-} from "@/components/ui/popover";
 import { Progress } from "@/components/ui/progress";
 import {
   Select,
@@ -135,7 +129,44 @@ function AppShell({ state, actions, children }) {
         </footer>
       ) : null}
       {showTabs ? <TabBar state={state} actions={actions} /> : null}
+      <PendingActionDialog state={state} actions={actions} />
     </main>
+  );
+}
+
+function PendingActionDialog({ state, actions }) {
+  const pending = state.pendingDialog;
+  const copy = {
+    navigation: {
+      title: "대화 화면을 잠시 벗어날까요?",
+      description: "대화가 바로 끊기지는 않습니다. 지금까지의 흐름은 유지되며, 하단의 훈련 탭을 누르면 다시 채팅으로 돌아올 수 있습니다.",
+      action: "이동하기"
+    },
+    reset: {
+      title: "처음으로 돌아갈까요?",
+      description: "현재 화면의 진행 상태를 초기화하고 홈으로 돌아갑니다. 저장된 훈련 기록은 그대로 남습니다.",
+      action: "처음으로"
+    },
+    feedback: {
+      title: "피드백을 받을까요?",
+      description: "피드백을 생성하면 이 훈련 대화가 종료되고 리포트 화면으로 이동합니다.",
+      action: "피드백 받기"
+    }
+  }[pending?.type || "navigation"];
+
+  return (
+    <AlertDialog open={Boolean(pending)} onOpenChange={(open) => !open && actions.cancelPendingDialog()}>
+      <AlertDialogContent size="sm" className="max-w-[calc(100vw-2rem)] rounded-3xl">
+        <AlertDialogHeader>
+          <AlertDialogTitle>{copy.title}</AlertDialogTitle>
+          <AlertDialogDescription>{copy.description}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel onClick={actions.cancelPendingDialog}>취소</AlertDialogCancel>
+          <AlertDialogAction onClick={actions.confirmPendingDialog}>{copy.action}</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
@@ -371,43 +402,9 @@ function ChatComposer({ state, actions }) {
   };
   return (
     <form className="grid grid-cols-[minmax(0,1fr)_68px] gap-2 border-t bg-card/95 p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] shadow-[0_-12px_32px_rgba(23,33,31,0.08)]" onSubmit={submit}>
-      <div className="col-span-full grid grid-cols-[1fr_auto] items-center gap-2">
-        <Drawer>
-          <DrawerTrigger asChild><Button type="button" variant="secondary" size="sm" className="justify-self-start rounded-full">상황 보기</Button></DrawerTrigger>
-          <DrawerContent>
-            <div className="mx-auto w-full max-w-[480px]">
-              <DrawerHeader>
-                <DrawerTitle>{labels.persona}</DrawerTitle>
-                <DrawerDescription>현재 대화 설정을 확인합니다.</DrawerDescription>
-              </DrawerHeader>
-              <div className="grid gap-3 px-4 pb-6 text-sm">
-                <div className="grid gap-2 rounded-2xl border bg-muted/60 p-4">
-                  <span className="text-xs font-black text-muted-foreground">관계</span>
-                  <strong>{labels.relationship || "관계 미설정"}</strong>
-                </div>
-                <div className="grid gap-2 rounded-2xl border bg-muted/60 p-4">
-                  <span className="text-xs font-black text-muted-foreground">상황</span>
-                  <strong>{labels.setting || "상황 미설정"}</strong>
-                </div>
-                <div className="grid gap-2 rounded-2xl border bg-muted/60 p-4">
-                  <span className="text-xs font-black text-muted-foreground">훈련 초점</span>
-                  <strong>{labels.goal || "훈련 초점 미설정"}</strong>
-                </div>
-                <p className="rounded-2xl bg-primary/10 p-3 text-primary">피드백은 한 번 이상 답한 뒤 받을 수 있습니다. 진행 중에는 뒤로가기를 막아 실수로 대화를 끊지 않습니다.</p>
-              </div>
-            </div>
-          </DrawerContent>
-        </Drawer>
-        <Popover>
-          <PopoverTrigger asChild><Button type="button" variant="outline" size="sm" className="rounded-full">전환 안내</Button></PopoverTrigger>
-          <PopoverContent align="end" className="w-72 max-w-[calc(100vw-2rem)]">
-            <PopoverHeader>
-              <PopoverTitle>이동 보호</PopoverTitle>
-              <PopoverDescription>피드백 생성 중에는 전환 버튼이 비활성화되고, 진행 중 대화에서 다른 탭으로 갈 때 확인을 받습니다.</PopoverDescription>
-            </PopoverHeader>
-          </PopoverContent>
-        </Popover>
-        <span className="col-span-full rounded-full bg-muted px-3 py-1.5 text-center text-xs font-black text-muted-foreground">{userTurns}턴 진행 · {assistantTurns}개 응답</span>
+      <div className="col-span-full grid gap-1.5">
+        <span className="rounded-full bg-muted px-3 py-1.5 text-center text-xs font-black text-muted-foreground">{userTurns}턴 진행 · {assistantTurns}개 응답</span>
+        <span className="truncate px-2 text-center text-[0.72rem] font-semibold text-muted-foreground">{labels.persona} · {labels.relationship} · {labels.goal}</span>
       </div>
       <Textarea
         value={draft}
