@@ -793,7 +793,7 @@ function filterConversations(conversations, searchParams = new URLSearchParams()
 }
 
 function paginate(items, searchParams = new URLSearchParams()) {
-  const limit = Math.min(100, Math.max(1, Number(searchParams.get("limit") || 30)));
+  const limit = Math.min(500, Math.max(1, Number(searchParams.get("limit") || 30)));
   return { items: items.slice(0, limit), nextCursor: items.length > limit ? String(limit) : null };
 }
 
@@ -1907,6 +1907,38 @@ async function handleAppApi(req, res, url) {
     return true;
   }
 
+  const adminUserIdMatch = path.match(/^\/api\/admin\/users\/([^/]+)$/);
+  if (adminUserIdMatch && req.method === "PUT") {
+    const actor = requireAdmin(req, res);
+    if (!actor) return true;
+    const targetId = decodeURIComponent(adminUserIdMatch[1]);
+    const target = db.users.find((item) => item.id === targetId);
+    if (!target) {
+      json(res, 404, { error: "사용자를 찾지 못했습니다." });
+      return true;
+    }
+    const body = await readJson(req);
+    if (body.displayName != null) {
+      const dn = String(body.displayName).trim().slice(0, 120);
+      if (dn) target.displayName = dn;
+    }
+    if (body.profile && typeof body.profile === "object") {
+      target.profile = sanitizeProfile({ ...(target.profile || {}), ...body.profile });
+    }
+    if (body.role === "admin" || body.role === "user") {
+      const adminCount = db.users.filter((item) => item.role === "admin").length;
+      if (target.role === "admin" && body.role === "user" && adminCount <= 1) {
+        json(res, 400, { error: "마지막 관리자 권한은 해제할 수 없습니다." });
+        return true;
+      }
+      target.role = body.role;
+    }
+    target.updatedAt = new Date().toISOString();
+    await saveDb();
+    json(res, 200, { user: publicUser(target) });
+    return true;
+  }
+
   if (path === "/api/admin/conversations" && req.method === "GET") {
     const user = requireAdmin(req, res);
     if (!user) return true;
@@ -1968,7 +2000,15 @@ async function handleAppApi(req, res, url) {
       json(res, 404, { error: "훈련 기록을 찾지 못했습니다." });
       return true;
     }
-    json(res, 200, { conversation: publicConversation(conversation, { includeMessages: true, includeFeedback: true }) });
+    const owner = db.users.find((item) => item.id === conversation.userId);
+    json(res, 200, {
+      conversation: {
+        ...publicConversation(conversation, { includeMessages: true, includeFeedback: true }),
+        user: owner
+          ? { id: owner.id, email: owner.email || "", name: owner.profile?.name || owner.displayName || "" }
+          : null
+      }
+    });
     return true;
   }
 
