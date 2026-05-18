@@ -9,6 +9,7 @@
     "check": "node --check server.js && vite build",
     "smoke": "node scripts/smoke-api.mjs",
     "qa:walkthrough": "node scripts/qa-full-walkthrough.mjs",
+    "qa:claude-personas": "node scripts/qa-claude-personas.mjs",
     "start": "node server.js"
   },
   "engines": {
