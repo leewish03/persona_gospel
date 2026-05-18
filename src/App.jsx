@@ -130,7 +130,14 @@ function AppShell({ state, actions, children }) {
     <>
       <div className="relative mx-auto h-[var(--app-vvh)] max-h-[var(--app-vvh)] w-full max-w-[480px] overflow-hidden bg-background shadow-2xl ring-1 ring-border/60">
         {isHome ? (
-          <main className="flex h-full min-h-0 flex-col overflow-hidden">{children}</main>
+          <main
+            className={cn(
+              "flex h-full min-h-0 flex-col overflow-hidden",
+              showTabs && "pb-[calc(4.25rem+env(safe-area-inset-bottom))]"
+            )}
+          >
+            {children}
+          </main>
         ) : (
           <main className={cn("flex h-full min-h-0 flex-col overflow-hidden", showTabs && "pb-[calc(4.25rem+env(safe-area-inset-bottom))]")}>
             <header className="grid shrink-0 grid-cols-[44px_minmax(0,1fr)_minmax(0,auto)] items-center gap-2 border-b bg-card/80 px-4 pb-3 pt-4 backdrop-blur">
@@ -278,6 +285,7 @@ function TabBar({ state, actions }) {
 
 function HomeScreen({ state, actions }) {
   const cta = !state.hasUser ? "로그인하고 시작" : state.profileComplete ? "훈련 시작" : "프로필 입력";
+  const tabBarReserved = state.hasUser && state.profileComplete;
   return (
     <div className="relative h-full overflow-hidden bg-stone-950">
       <img className="absolute inset-0 size-full select-none object-cover object-center" draggable="false" src="/assets/home-cover.jpg" alt="카페에서 진지하게 대화하는 두 사람" />
@@ -286,7 +294,12 @@ function HomeScreen({ state, actions }) {
         <p className="text-xs font-black uppercase tracking-wide text-white/80">Witness Lab</p>
         <h1 className="mt-1 text-lg font-black">복음 대화 훈련소</h1>
       </div>
-      <div className="absolute inset-x-0 bottom-0 z-10 grid gap-4 p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] text-white">
+      <div
+        className={cn(
+          "absolute inset-x-0 bottom-0 z-10 grid gap-4 p-5 text-white",
+          tabBarReserved ? "pb-5" : "pb-[calc(1.25rem+env(safe-area-inset-bottom))]"
+        )}
+      >
         <div>
           <Badge variant="secondary" className="mb-3 bg-white/90 text-stone-900">Mobile Training</Badge>
           <h2 className="text-[clamp(1.65rem,8vw,2.6rem)] font-black leading-tight">복음을 전하는 대화,<br />먼저 연습하세요</h2>

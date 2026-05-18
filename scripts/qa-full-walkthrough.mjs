@@ -83,7 +83,7 @@ async function main() {
     await shot(page, "05-after-profile");
     log.push(`05-after-profile: ${join(outDir, "05-after-profile.png")}`);
 
-    await page.locator(".text-white").getByRole("button", { name: "훈련 시작" }).evaluate((b) => b.click());
+    await page.locator(".text-white").getByRole("button", { name: "훈련 시작" }).click();
     await page.getByRole("heading", { name: "페르소나 선택" }).waitFor({ state: "visible", timeout: 15_000 });
     await shot(page, "06-persona");
     log.push(`06-persona: ${join(outDir, "06-persona.png")}`);
