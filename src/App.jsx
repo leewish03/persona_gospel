@@ -445,11 +445,23 @@ function InfoList({ title, items = [] }) {
 function ChatScreen({ state }) {
   const listRef = useRef(null);
   const persona = state.currentPersona;
+  const labels = sessionLabels(state.currentSession, state.personas);
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
   }, [state.messages, state.waitingForAssistant]);
   return (
     <div ref={listRef} className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto overscroll-y-contain rounded-2xl bg-muted p-2">
+      {state.sessionStarted ? (
+        <div className="shrink-0 rounded-2xl border border-border/70 bg-background px-3 py-2.5 text-sm shadow-sm">
+          <p className="mb-1.5 text-[0.65rem] font-black uppercase tracking-wide text-primary">상황 · 관계</p>
+          <p className="leading-snug text-foreground">
+            <span className="font-black text-muted-foreground">관계</span> {labels.relationship}
+          </p>
+          <p className="mt-1.5 leading-snug text-foreground">
+            <span className="font-black text-muted-foreground">상황</span> {labels.setting}
+          </p>
+        </div>
+      ) : null}
       {state.messages.map((message, index) => (
         <MessageBubble key={`${message.role}-${index}`} message={message} persona={persona} />
       ))}
@@ -491,13 +503,17 @@ function ChatComposer({ state, actions }) {
     setDraft("");
   };
   return (
-    <form className="grid shrink-0 grid-cols-[minmax(0,1fr)_68px] items-end gap-2 border-t bg-card/95 p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] shadow-[0_-12px_32px_rgba(23,33,31,0.08)]" onSubmit={submit}>
+    <form
+      className="flex shrink-0 items-stretch gap-3 border-t bg-card/95 px-3 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] shadow-[0_-12px_32px_rgba(23,33,31,0.08)]"
+      onSubmit={submit}
+    >
       <Textarea
         value={draft}
         disabled={state.isBusy || !state.sessionStarted}
         placeholder={goalHint || "상대에게 건넬 말"}
         title={goalHint || undefined}
-        className="min-h-10 resize-none rounded-2xl bg-background py-2 text-sm leading-snug"
+        rows={1}
+        className="min-h-11 max-h-40 flex-1 resize-none rounded-2xl border bg-background py-2.5 text-sm leading-snug field-sizing-fixed md:text-sm"
         onChange={(event) => setDraft(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
@@ -509,7 +525,7 @@ function ChatComposer({ state, actions }) {
           }
         }}
       />
-      <Button className="self-end" type="submit" disabled={!canSend}>
+      <Button className="h-auto min-h-11 min-w-[4.25rem] shrink-0 self-stretch rounded-2xl px-4 text-sm font-black" type="submit" disabled={!canSend}>
         전송
       </Button>
     </form>
