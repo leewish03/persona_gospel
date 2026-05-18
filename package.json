@@ -8,6 +8,7 @@
     "build": "vite build",
     "check": "node --check server.js && vite build",
     "smoke": "node scripts/smoke-api.mjs",
+    "qa:walkthrough": "node scripts/qa-full-walkthrough.mjs",
     "start": "node server.js"
   },
   "engines": {
