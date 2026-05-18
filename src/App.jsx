@@ -925,7 +925,7 @@ function UsageChart({ usage }) {
 
 function AdminTables({ state, users, conversations, usage, actions }) {
   return (
-    <Accordion type="multiple" defaultValue={["users", "conversations", "usage"]} className="grid gap-3">
+    <Accordion type="multiple" defaultValue={[]} className="grid gap-3">
       <AdminAccordion value="users" title="사용자별 사용량">
         <div className="grid gap-2">
           {users.map((user) => (
@@ -1282,7 +1282,7 @@ function AdminSettings({ settings, onSave }) {
     });
   };
   return (
-    <Accordion type="single" collapsible defaultValue="settings">
+    <Accordion type="single" collapsible>
       <AccordionItem value="settings" className="rounded-xl border bg-card px-4">
         <AccordionTrigger className="font-black">모델 설정</AccordionTrigger>
         <AccordionContent>
