@@ -11,6 +11,8 @@
  * 환경 변수:
  * - QA_BASE_URL — API 베이스
  * - QA_START_ONLY=1 — /api/start 만 (비용 절감)
+ * - QA_PERSONA_GAP_MS — 페르소나 사이 대기. 기본: start 전용 15000, start+chat 전체 28000 (TPM 여유)
+ * - QA_CHAT_GAP_MS — /api/start 직후 /api/chat 전 대기. 기본: start+chat 12000 (start 전용일 때는 미사용)
  */
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -19,8 +21,24 @@ import { fileURLToPath } from "node:url";
 const root = dirname(fileURLToPath(import.meta.url));
 const base = (process.env.QA_BASE_URL || "http://127.0.0.1:4173").replace(/\/+$/, "");
 const startOnly = process.env.QA_START_ONLY === "1";
+const defaultPersonaGapMs = startOnly ? 15000 : 28000;
+const defaultChatGapMs = startOnly ? 0 : 12000;
+const personaGapMs = (() => {
+  const raw = process.env.QA_PERSONA_GAP_MS;
+  if (raw !== undefined && String(raw).trim() !== "") return Math.max(0, Number(raw));
+  return defaultPersonaGapMs;
+})();
+const chatGapMs = (() => {
+  const raw = process.env.QA_CHAT_GAP_MS;
+  if (raw !== undefined && String(raw).trim() !== "") return Math.max(0, Number(raw));
+  return defaultChatGapMs;
+})();
 
 let cookie = "";
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function absorbSetCookie(res) {
   const lines = typeof res.headers.getSetCookie === "function" ? res.headers.getSetCookie() : [];
@@ -85,6 +103,11 @@ async function main() {
     process.exit(1);
   }
   console.log("OK 설정: 채팅 = anthropic, model =", chat.model || "?");
+  console.log("호출 간격(ms):", {
+    personaGapMs,
+    chatGapMs: startOnly ? "(start 전용, chat 간격 미사용)" : chatGapMs,
+    defaults: { persona: defaultPersonaGapMs, chat: defaultChatGapMs }
+  });
 
   const login = await api("/api/dev-login", { method: "POST", json: {} });
   if (!login.res.ok) {
@@ -117,13 +140,18 @@ async function main() {
   }
 
   let failed = 0;
-  for (const personaId of ids) {
+  for (let i = 0; i < ids.length; i++) {
+    const personaId = ids[i];
     const session = { ...sessionBase, personaId };
     process.stdout.write(`→ ${personaId} /api/start … `);
     const start = await api("/api/start", { method: "POST", json: { session } });
     if (!start.res.ok) {
       console.log("FAIL", start.res.status, start.data?.error || start.data);
       failed += 1;
+      if (i < ids.length - 1 && personaGapMs) {
+        process.stdout.write(`   … TPM 여유 ${personaGapMs}ms 대기 …\n`);
+        await sleep(personaGapMs);
+      }
       continue;
     }
     const text = start.data.text;
@@ -131,12 +159,21 @@ async function main() {
     if (!text || String(text).trim().length < 8) {
       console.log("FAIL 빈 응답 또는 너무 짧음");
       failed += 1;
+      if (i < ids.length - 1 && personaGapMs) {
+        process.stdout.write(`   … TPM 여유 ${personaGapMs}ms 대기 …\n`);
+        await sleep(personaGapMs);
+      }
       continue;
     }
     console.log("OK", `(${String(text).slice(0, 48).replace(/\n/g, " ")}…)`);
 
     if (!startOnly && conversationId) {
-      process.stdout.write(`   … /api/chat 1턴 … `);
+      if (chatGapMs) {
+        process.stdout.write(`   … ${chatGapMs}ms 대기 후 /api/chat … `);
+        await sleep(chatGapMs);
+      } else {
+        process.stdout.write(`   … /api/chat 1턴 … `);
+      }
       const messages = [
         { role: "assistant", content: text },
         { role: "user", content: "안녕, 오늘 좀 피곤해서 말 걸어줘서 고마워." }
@@ -148,15 +185,28 @@ async function main() {
       if (!chatRes.res.ok) {
         console.log("FAIL", chatRes.res.status, chatRes.data?.error || chatRes.data);
         failed += 1;
+        if (i < ids.length - 1 && personaGapMs) {
+          process.stdout.write(`   … TPM 여유 ${personaGapMs}ms 대기 …\n`);
+          await sleep(personaGapMs);
+        }
         continue;
       }
       const reply = chatRes.data.text;
       if (!reply || String(reply).trim().length < 4) {
         console.log("FAIL 두 번째 응답 비정상");
         failed += 1;
+        if (i < ids.length - 1 && personaGapMs) {
+          process.stdout.write(`   … TPM 여유 ${personaGapMs}ms 대기 …\n`);
+          await sleep(personaGapMs);
+        }
         continue;
       }
       console.log("OK");
+    }
+
+    if (i < ids.length - 1 && personaGapMs) {
+      process.stdout.write(`   … 다음 페르소나까지 ${personaGapMs}ms 대기 …\n`);
+      await sleep(personaGapMs);
     }
   }
 
