@@ -85,6 +85,9 @@ function AppShell({ state, actions, children }) {
   const primaryLabel = state.currentScreen === "review" && !state.reviewConfirmed ? "내용 확인" : meta.action;
   const showBottom = !isHome && !actionless && !(state.currentScreen === "chat" && state.sessionStarted);
   const showTabs = state.hasUser && state.profileComplete && !["login", "profile"].includes(state.currentScreen);
+  const chatUserTurns = state.messages.filter((m) => m.role === "user").length;
+  const canFeedbackFromChat = chatUserTurns > 0 && !state.isBusy && state.sessionStarted;
+  const headerTrailingChat = state.currentScreen === "chat" && state.sessionStarted;
 
   useEffect(() => {
     const root = document.documentElement;
@@ -92,6 +95,12 @@ function AppShell({ state, actions, children }) {
     const sync = () => {
       const height = vv ? vv.height : window.innerHeight;
       root.style.setProperty("--app-vvh", `${Math.max(1, Math.round(height))}px`);
+      if (vv) {
+        const inset = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
+        root.style.setProperty("--keyboard-inset", `${inset}px`);
+      } else {
+        root.style.setProperty("--keyboard-inset", "0px");
+      }
     };
     sync();
     if (!vv) {
@@ -109,52 +118,70 @@ function AppShell({ state, actions, children }) {
   }, []);
 
   return (
-    <main className={cn("mx-auto grid h-[var(--app-vvh)] max-h-[var(--app-vvh)] w-full max-w-[480px] overflow-hidden bg-background shadow-2xl ring-1 ring-border/60", isHome ? "grid-rows-[minmax(0,1fr)]" : "grid-rows-[auto_auto_minmax(0,1fr)_auto_auto]")}>
-      {isHome ? null : (
-        <header className="grid grid-cols-[44px_minmax(0,1fr)_58px] items-center gap-2 border-b bg-card/80 px-4 pb-3 pt-4 backdrop-blur">
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="이전 단계"
-            className="rounded-full disabled:bg-muted disabled:text-muted-foreground"
-            disabled={state.isBusy || (state.currentScreen === "chat" && state.sessionStarted)}
-            onClick={actions.previousScreen}
-          >
-            <ChevronLeft />
-          </Button>
-          <div className="min-w-0 text-center">
-            <p className="text-xs font-black uppercase text-primary">{meta.eyebrow}</p>
-            <h1 className="truncate text-base font-black">{meta.title}</h1>
-          </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="rounded-full font-black disabled:bg-muted disabled:text-muted-foreground"
-            disabled={state.isBusy}
-            onClick={actions.resetAll}
-          >
-            처음
-          </Button>
-        </header>
-      )}
-      {isHome ? null : <Progress value={state.setupProgress} className="mx-4 h-1 w-auto" />}
-      <section className={cn("min-h-0 overscroll-y-contain", isHome ? "overflow-hidden p-0" : "overflow-y-auto p-4")}>{children}</section>
-      {state.currentScreen === "chat" ? <ChatComposer state={state} actions={actions} /> : null}
-      {showBottom ? (
-        <footer className={cn("grid gap-2 border-t bg-card/95 p-4 shadow-[0_-12px_32px_rgba(23,33,31,0.08)]", meta.secondary && "grid-cols-2")}>
-          <Button disabled={state.isBusy || (state.currentScreen === "review" && !state.reviewConfirmed && false)} onClick={actions.handlePrimaryAction}>
-            {primaryLabel}
-          </Button>
-          {meta.secondary ? (
-            <Button variant="secondary" disabled={state.isBusy} onClick={actions.handleSecondaryAction}>
-              {meta.secondary}
-            </Button>
-          ) : null}
-        </footer>
-      ) : null}
-      {showTabs ? <TabBar state={state} actions={actions} /> : null}
+    <>
+      <div className="relative mx-auto h-[var(--app-vvh)] max-h-[var(--app-vvh)] w-full max-w-[480px] overflow-hidden bg-background shadow-2xl ring-1 ring-border/60">
+        {isHome ? (
+          <main className="flex h-full min-h-0 flex-col overflow-hidden">{children}</main>
+        ) : (
+          <main className={cn("flex h-full min-h-0 flex-col overflow-hidden", showTabs && "pb-[calc(4.25rem+env(safe-area-inset-bottom))]")}>
+            <header className="grid shrink-0 grid-cols-[44px_minmax(0,1fr)_minmax(0,auto)] items-center gap-2 border-b bg-card/80 px-4 pb-3 pt-4 backdrop-blur">
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="이전 단계"
+                className="rounded-full disabled:bg-muted disabled:text-muted-foreground"
+                disabled={state.isBusy || (state.currentScreen === "chat" && state.sessionStarted)}
+                onClick={actions.previousScreen}
+              >
+                <ChevronLeft />
+              </Button>
+              <div className="min-w-0 text-center">
+                <p className="text-xs font-black uppercase text-primary">{meta.eyebrow}</p>
+                <h1 className="truncate text-base font-black">{meta.title}</h1>
+              </div>
+              {headerTrailingChat ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="max-w-[5.5rem] shrink-0 rounded-full px-2 text-xs font-black disabled:bg-muted disabled:text-muted-foreground"
+                  disabled={!canFeedbackFromChat}
+                  onClick={actions.finishSession}
+                >
+                  피드백
+                </Button>
+              ) : (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="rounded-full font-black disabled:bg-muted disabled:text-muted-foreground"
+                  disabled={state.isBusy}
+                  onClick={actions.resetAll}
+                >
+                  처음
+                </Button>
+              )}
+            </header>
+            <Progress value={state.setupProgress} className="mx-4 h-1 w-auto shrink-0" />
+            <section className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain p-4">{children}</section>
+            {state.currentScreen === "chat" ? <ChatComposer state={state} actions={actions} /> : null}
+            {showBottom ? (
+              <footer className={cn("grid shrink-0 gap-2 border-t bg-card/95 p-4 shadow-[0_-12px_32px_rgba(23,33,31,0.08)]", meta.secondary && "grid-cols-2")}>
+                <Button disabled={state.isBusy || (state.currentScreen === "review" && !state.reviewConfirmed && false)} onClick={actions.handlePrimaryAction}>
+                  {primaryLabel}
+                </Button>
+                {meta.secondary ? (
+                  <Button variant="secondary" disabled={state.isBusy} onClick={actions.handleSecondaryAction}>
+                    {meta.secondary}
+                  </Button>
+                ) : null}
+              </footer>
+            ) : null}
+          </main>
+        )}
+        {showTabs ? <TabBar state={state} actions={actions} /> : null}
+      </div>
       <PendingActionDialog state={state} actions={actions} />
-    </main>
+    </>
   );
 }
 
@@ -202,7 +229,11 @@ function TabBar({ state, actions }) {
     ...(state.isAdmin ? [{ key: "admin", label: "관리", icon: Shield }] : [])
   ];
   return (
-    <nav className="grid auto-cols-fr grid-flow-col gap-2 border-t bg-card/95 px-3 py-2 shadow-[0_-10px_24px_rgba(23,33,31,0.08)]" aria-label="하단 내비게이션">
+    <nav
+      className="fixed left-1/2 z-40 grid w-full max-w-[480px] -translate-x-1/2 auto-cols-fr grid-flow-col gap-2 border-t bg-card/95 px-3 pb-[max(env(safe-area-inset-bottom),0.5rem))] pt-2 shadow-[0_-10px_24px_rgba(23,33,31,0.08)] backdrop-blur"
+      style={{ bottom: "var(--keyboard-inset, 0px)" }}
+      aria-label="하단 내비게이션"
+    >
       {tabs.map((tab) => {
         const Icon = tab.icon;
         const active = tab.key === state.currentScreen || (tab.key === "home" && ["persona", "context", "review", "chat", "feedback"].includes(state.currentScreen));
@@ -214,8 +245,17 @@ function TabBar({ state, actions }) {
             className={cn("h-14 flex-col gap-1 rounded-2xl text-xs font-black", active && "border border-primary/20 bg-primary text-primary-foreground shadow-sm hover:bg-primary/90")}
             disabled={state.isBusy}
             onClick={() => {
-              if (tab.key === "home" && state.sessionStarted) actions.goTo("chat");
-              else actions.goTo(tab.key);
+              if (tab.key === "home") {
+                if (active && state.sessionStarted && state.currentScreen === "chat") {
+                  actions.resetAll();
+                  return;
+                }
+                if (state.sessionStarted) {
+                  actions.goTo("chat");
+                  return;
+                }
+              }
+              actions.goTo(tab.key);
             }}
           >
             <Icon />
@@ -419,10 +459,9 @@ function MessageBubble({ message, persona, typing }) {
 
 function ChatComposer({ state, actions }) {
   const [draft, setDraft] = useState("");
-  const userTurns = state.messages.filter((message) => message.role === "user").length;
   const labels = sessionLabels(state.currentSession, state.personas);
+  const goalHint = labels.goal?.trim();
   const canSend = draft.trim() && !state.isBusy && state.sessionStarted;
-  const canFinish = userTurns > 0 && !state.isBusy && state.sessionStarted;
   const submit = (event) => {
     event.preventDefault();
     if (!canSend) return;
@@ -430,17 +469,13 @@ function ChatComposer({ state, actions }) {
     setDraft("");
   };
   return (
-    <form className="grid shrink-0 grid-cols-[minmax(0,1fr)_68px] gap-2 border-t bg-card/95 p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] shadow-[0_-12px_32px_rgba(23,33,31,0.08)]" onSubmit={submit}>
-      {labels.goal ? (
-        <div className="col-span-full px-1 pb-0.5">
-          <p className="truncate text-center text-[0.7rem] font-semibold text-muted-foreground">{labels.goal}</p>
-        </div>
-      ) : null}
+    <form className="grid shrink-0 grid-cols-[minmax(0,1fr)_68px] items-end gap-2 border-t bg-card/95 p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] shadow-[0_-12px_32px_rgba(23,33,31,0.08)]" onSubmit={submit}>
       <Textarea
         value={draft}
         disabled={state.isBusy || !state.sessionStarted}
-        placeholder="상대에게 건넬 말"
-        className="min-h-12 resize-none rounded-2xl bg-background"
+        placeholder={goalHint || "상대에게 건넬 말"}
+        title={goalHint || undefined}
+        className="min-h-10 resize-none rounded-2xl bg-background py-2 text-sm leading-snug"
         onChange={(event) => setDraft(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
@@ -452,10 +487,9 @@ function ChatComposer({ state, actions }) {
           }
         }}
       />
-      <div className="grid gap-2">
-        <Button type="submit" disabled={!canSend}>전송</Button>
-        <Button type="button" variant="secondary" disabled={!canFinish} onClick={actions.finishSession}>피드백</Button>
-      </div>
+      <Button className="self-end" type="submit" disabled={!canSend}>
+        전송
+      </Button>
     </form>
   );
 }
@@ -623,8 +657,19 @@ function AdminScreen({ state, actions }) {
         </CardHeader>
       </Card>
       {warning ? <Alert variant="destructive"><AlertCircle /><AlertTitle>예산 경고</AlertTitle><AlertDescription>월 예산의 {formatPercent(budgetRate)}를 사용했습니다.</AlertDescription></Alert> : null}
+      <AdminSettings settings={settings.settings || {}} onSave={actions.saveAdminSettings} />
+      <div className="grid grid-cols-2 gap-3">
+        <Metric label="가입 사용자" value={formatCount(summary.users)} detail={`프로필 완료 ${formatPercent(percentOf(summary.completedProfiles, summary.users))}`} />
+        <Metric label="전체 훈련" value={formatCount(summary.conversations)} detail={`완료율 ${formatPercent(percentOf(summary.finishedConversations, summary.conversations))}`} />
+        <Metric label="이번 달 훈련" value={formatCount(summary.thisMonthConversations)} detail={`오늘 ${formatCount(summary.todayConversations)}회`} />
+        <Metric label="예산 사용률" value={monthlyBudget ? formatPercent(budgetRate) : "미설정"} detail={monthlyBudget ? `남은 예산 ${formatKrw(Math.max(0, monthlyBudget - monthlyCost))}` : "월 예산 설정 필요"} />
+      </div>
       <Card>
-        <CardContent className="grid gap-3 pt-6">
+        <CardHeader>
+          <CardTitle>필터</CardTitle>
+          <CardDescription>아래 조건으로 목록과 그래프를 한꺼번에 좁힙니다.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3">
           <Input placeholder="사용자/모델/훈련 검색" value={filters.q || ""} onChange={(event) => setFilters((value) => ({ ...value, q: event.target.value }))} />
           <div className="grid gap-3 rounded-2xl border bg-muted/40 p-3">
             <div className="grid gap-2">
@@ -640,13 +685,6 @@ function AdminScreen({ state, actions }) {
           <Button className="rounded-full" onClick={() => actions.loadAdmin(filters)}>필터 적용</Button>
         </CardContent>
       </Card>
-      <AdminSettings settings={settings.settings || {}} onSave={actions.saveAdminSettings} />
-      <div className="grid grid-cols-2 gap-3">
-        <Metric label="가입 사용자" value={formatCount(summary.users)} detail={`프로필 완료 ${formatPercent(percentOf(summary.completedProfiles, summary.users))}`} />
-        <Metric label="전체 훈련" value={formatCount(summary.conversations)} detail={`완료율 ${formatPercent(percentOf(summary.finishedConversations, summary.conversations))}`} />
-        <Metric label="이번 달 훈련" value={formatCount(summary.thisMonthConversations)} detail={`오늘 ${formatCount(summary.todayConversations)}회`} />
-        <Metric label="예산 사용률" value={monthlyBudget ? formatPercent(budgetRate) : "미설정"} detail={monthlyBudget ? `남은 예산 ${formatKrw(Math.max(0, monthlyBudget - monthlyCost))}` : "월 예산 설정 필요"} />
-      </div>
       <UsageChart usage={usage} />
       <AdminTables state={state} users={users.users || []} conversations={conversations.conversations || []} usage={usage} />
     </div>
@@ -675,7 +713,7 @@ function UsageChart({ usage }) {
     <Card>
       <CardHeader>
         <CardTitle>기간별 비용 그래프</CardTitle>
-        <CardDescription>필터 기간의 일자별 예상 비용입니다.</CardDescription>
+        <CardDescription>필터 기간의 일자별 예상 비용입니다. OpenAI는 env 단가, Anthropic은 모델별 Sonnet/Opus/Haiku MTok 단가(2026-05 문서 기준 기본값, env로 조정)로 추정합니다.</CardDescription>
       </CardHeader>
       <CardContent>
         <ChartContainer config={chartConfig} className="h-[300px] min-h-[300px] w-full">
@@ -738,6 +776,7 @@ function AdminTables({ state, users, conversations, usage }) {
               title={usageEventLabel(event.eventType)}
               subtitle={formatDate(event.createdAt)}
               items={[
+                ["공급자", event.provider || "openai"],
                 ["모델", event.model || "모델 미기록"],
                 ["비용", formatKrw(event.estimatedCostKrw)]
               ]}
@@ -1008,6 +1047,13 @@ function ModelSettingsCard({ kind, title, description, settings, onChange }) {
 function AdminSettings({ settings, onSave }) {
   const [form, setForm] = useState(() => normalizeAdminSettings(settings));
   const [status, setStatus] = useState("");
+  const settingsSyncKey = JSON.stringify(settings?.ai || {}) + JSON.stringify(settings?.cost || {}) + JSON.stringify(settings?.donation || {});
+
+  useEffect(() => {
+    setForm(normalizeAdminSettings(settings));
+    setStatus("");
+  }, [settingsSyncKey]);
+
   const update = (path, value) => {
     setForm((current) => {
       const next = structuredClone(current);

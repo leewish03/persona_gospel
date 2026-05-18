@@ -44,6 +44,19 @@ const chatInputPrice = Number(globalThis.process?.env?.OPENAI_CHAT_INPUT_USD_PER
 const chatOutputPrice = Number(globalThis.process?.env?.OPENAI_CHAT_OUTPUT_USD_PER_1M || 0.6);
 const feedbackInputPrice = Number(globalThis.process?.env?.OPENAI_FEEDBACK_INPUT_USD_PER_1M || 2);
 const feedbackOutputPrice = Number(globalThis.process?.env?.OPENAI_FEEDBACK_OUTPUT_USD_PER_1M || 8);
+/** Anthropic USD per 1M tokens (docs.claude.com pricing, 2026-05 기준 대표값; 환경변수로 덮어쓰기) */
+const anthropicChatSonnetInput = Number(globalThis.process?.env?.ANTHROPIC_CHAT_SONNET_INPUT_USD_PER_1M || 3);
+const anthropicChatSonnetOutput = Number(globalThis.process?.env?.ANTHROPIC_CHAT_SONNET_OUTPUT_USD_PER_1M || 15);
+const anthropicChatOpusInput = Number(globalThis.process?.env?.ANTHROPIC_CHAT_OPUS_INPUT_USD_PER_1M || 5);
+const anthropicChatOpusOutput = Number(globalThis.process?.env?.ANTHROPIC_CHAT_OPUS_OUTPUT_USD_PER_1M || 25);
+const anthropicChatHaikuInput = Number(globalThis.process?.env?.ANTHROPIC_CHAT_HAIKU_INPUT_USD_PER_1M || 1);
+const anthropicChatHaikuOutput = Number(globalThis.process?.env?.ANTHROPIC_CHAT_HAIKU_OUTPUT_USD_PER_1M || 5);
+const anthropicFeedbackSonnetInput = Number(globalThis.process?.env?.ANTHROPIC_FEEDBACK_SONNET_INPUT_USD_PER_1M || anthropicChatSonnetInput);
+const anthropicFeedbackSonnetOutput = Number(globalThis.process?.env?.ANTHROPIC_FEEDBACK_SONNET_OUTPUT_USD_PER_1M || anthropicChatSonnetOutput);
+const anthropicFeedbackOpusInput = Number(globalThis.process?.env?.ANTHROPIC_FEEDBACK_OPUS_INPUT_USD_PER_1M || anthropicChatOpusInput);
+const anthropicFeedbackOpusOutput = Number(globalThis.process?.env?.ANTHROPIC_FEEDBACK_OPUS_OUTPUT_USD_PER_1M || anthropicChatOpusOutput);
+const anthropicFeedbackHaikuInput = Number(globalThis.process?.env?.ANTHROPIC_FEEDBACK_HAIKU_INPUT_USD_PER_1M || anthropicChatHaikuInput);
+const anthropicFeedbackHaikuOutput = Number(globalThis.process?.env?.ANTHROPIC_FEEDBACK_HAIKU_OUTPUT_USD_PER_1M || anthropicChatHaikuOutput);
 const sessions = new Map();
 const oauthStates = new Map();
 
@@ -925,10 +938,45 @@ function extractAnthropicText(response) {
 }
 
 function normalizeAnthropicUsage(usage = {}) {
+  const inputTokens = Number(usage.input_tokens || 0);
+  const outputTokens = Number(usage.output_tokens || 0);
+  const reasoningTokens = Number(usage.output_tokens_details?.reasoning_tokens || usage.reasoning_tokens || 0);
   return {
-    inputTokens: Number(usage.input_tokens || 0),
-    outputTokens: Number(usage.output_tokens || 0),
-    reasoningTokens: 0
+    inputTokens,
+    outputTokens,
+    reasoningTokens
+  };
+}
+
+function anthropicPricePerMtok(model = "", modelType = "chat") {
+  const id = String(model || "").toLowerCase();
+  const isFeedback = modelType === "feedback";
+  const opusIn = isFeedback ? anthropicFeedbackOpusInput : anthropicChatOpusInput;
+  const opusOut = isFeedback ? anthropicFeedbackOpusOutput : anthropicChatOpusOutput;
+  const sonnetIn = isFeedback ? anthropicFeedbackSonnetInput : anthropicChatSonnetInput;
+  const sonnetOut = isFeedback ? anthropicFeedbackSonnetOutput : anthropicChatSonnetOutput;
+  const haikuIn = isFeedback ? anthropicFeedbackHaikuInput : anthropicChatHaikuInput;
+  const haikuOut = isFeedback ? anthropicFeedbackHaikuOutput : anthropicChatHaikuOutput;
+  if (id.includes("haiku")) return { inputPrice: haikuIn, outputPrice: haikuOut };
+  if (id.includes("opus")) return { inputPrice: opusIn, outputPrice: opusOut };
+  return { inputPrice: sonnetIn, outputPrice: sonnetOut };
+}
+
+function estimateCost({ provider = "openai", model = "", modelType, inputTokens, outputTokens }) {
+  let inputPrice;
+  let outputPrice;
+  if (provider === "anthropic") {
+    const tier = anthropicPricePerMtok(model, modelType);
+    inputPrice = tier.inputPrice;
+    outputPrice = tier.outputPrice;
+  } else {
+    inputPrice = modelType === "feedback" ? feedbackInputPrice : chatInputPrice;
+    outputPrice = modelType === "feedback" ? feedbackOutputPrice : chatOutputPrice;
+  }
+  const estimatedCostUsd = (Number(inputTokens || 0) / 1_000_000) * inputPrice + (Number(outputTokens || 0) / 1_000_000) * outputPrice;
+  return {
+    estimatedCostUsd: Number(estimatedCostUsd.toFixed(6)),
+    estimatedCostKrw: Number((estimatedCostUsd * (db.settings?.cost?.usdToKrw || usdToKrw)).toFixed(2))
   };
 }
 
@@ -1038,18 +1086,39 @@ async function callAnthropicWithUsage({
   thinkingBudgetTokens = 0,
   thinkingDisplay = "omitted"
 }) {
+  const id = String(model || "").toLowerCase();
+  const supportsAdaptive = /claude-(opus-4-7|opus-4-6|sonnet-4-6)/.test(id) || id.includes("mythos");
+  const opus47 = id.includes("opus-4-7");
+  let effectiveType = thinkingType;
+  if (opus47 && effectiveType === "enabled") effectiveType = "adaptive";
+  if (effectiveType === "adaptive" && !supportsAdaptive) {
+    if (id.includes("haiku") || /4-5|opus-4-1|sonnet-4-2025|opus-4-2025/.test(id)) {
+      effectiveType = "enabled";
+    } else {
+      effectiveType = "disabled";
+    }
+  }
+
+  let budget = Math.max(1024, Number(thinkingBudgetTokens) || 8192);
+  let maxTokens = Math.max(1, Number(maxOutputTokens) || 900);
+  if (effectiveType === "enabled" && budget >= maxTokens) {
+    maxTokens = Math.min(64000, budget + 2048);
+  }
+
   const payload = {
     model,
-    max_tokens: maxOutputTokens,
+    max_tokens: maxTokens,
     system: instructions,
     messages: [{ role: "user", content: input }]
   };
   if (temperature !== "") payload.temperature = Number(temperature);
   if (topP !== "") payload.top_p = Number(topP);
-  if (thinkingType === "adaptive") {
-    payload.thinking = { type: "adaptive", display: thinkingDisplay };
-  } else if (thinkingType === "enabled" && thinkingBudgetTokens > 0) {
-    payload.thinking = { type: "enabled", budget_tokens: thinkingBudgetTokens };
+
+  if (effectiveType === "adaptive") {
+    payload.thinking = { type: "adaptive" };
+  } else if (effectiveType === "enabled") {
+    const display = thinkingDisplay === "summarized" || thinkingDisplay === "omitted" ? thinkingDisplay : "omitted";
+    payload.thinking = { type: "enabled", budget_tokens: budget, display };
   }
 
   const result = await fetch("https://api.anthropic.com/v1/messages", {
@@ -1094,24 +1163,15 @@ function estimateUsage(input, output, usage = {}) {
   };
 }
 
-function estimateCost({ modelType, inputTokens, outputTokens }) {
-  const inputPrice = modelType === "feedback" ? feedbackInputPrice : chatInputPrice;
-  const outputPrice = modelType === "feedback" ? feedbackOutputPrice : chatOutputPrice;
-  const estimatedCostUsd = (inputTokens / 1_000_000) * inputPrice + (outputTokens / 1_000_000) * outputPrice;
-  return {
-    estimatedCostUsd: Number(estimatedCostUsd.toFixed(6)),
-    estimatedCostKrw: Number((estimatedCostUsd * (db.settings?.cost?.usdToKrw || usdToKrw)).toFixed(2))
-  };
-}
-
-function recordUsageEvent({ userId, conversationId = "", eventType, model, modelType, input, output, usage }) {
+function recordUsageEvent({ userId, conversationId = "", eventType, provider = "openai", model, modelType, input, output, usage }) {
   const estimatedUsage = estimateUsage(input, output, usage);
-  const cost = estimateCost({ modelType, ...estimatedUsage });
+  const cost = estimateCost({ provider, model, modelType, ...estimatedUsage });
   db.usageEvents.unshift({
     id: randomUUID(),
     userId,
     conversationId,
     eventType,
+    provider,
     model,
     ...estimatedUsage,
     ...cost,
@@ -1940,7 +2000,7 @@ async function handleApi(req, res, url) {
 
     if (path === "/api/start") {
       const input = initialPromptFor(session, persona);
-      const { text, usage, model } = await callModelWithUsage({
+      const { text, usage, model, provider } = await callModelWithUsage({
         modelType: "chat",
         instructions: personaPrompt,
         input
@@ -1954,6 +2014,7 @@ async function handleApi(req, res, url) {
         userId: user.id,
         conversationId: conversation.id,
         eventType: "chat_start",
+        provider,
         model,
         modelType: "chat",
         input,
@@ -1972,7 +2033,7 @@ async function handleApi(req, res, url) {
         return;
       }
       const input = chatPromptFor(session, persona, safeMessages);
-      const { text, usage, model } = await callModelWithUsage({
+      const { text, usage, model, provider } = await callModelWithUsage({
         modelType: "chat",
         instructions: personaPrompt,
         input
@@ -1985,6 +2046,7 @@ async function handleApi(req, res, url) {
           userId: user.id,
           conversationId: conversation.id,
           eventType: "chat_message",
+          provider,
           model,
           modelType: "chat",
           input,
@@ -2004,7 +2066,7 @@ async function handleApi(req, res, url) {
         return;
       }
       const input = feedbackInputFor(session, persona, body.messages || []);
-      const { text, usage, model } = await callModelWithUsage({
+      const { text, usage, model, provider } = await callModelWithUsage({
         modelType: "feedback",
         instructions: feedbackPrompt,
         input
@@ -2020,6 +2082,7 @@ async function handleApi(req, res, url) {
           userId: user.id,
           conversationId: conversation.id,
           eventType: "feedback",
+          provider,
           model,
           modelType: "feedback",
           input,
