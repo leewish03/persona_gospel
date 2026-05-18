@@ -1301,7 +1301,18 @@ function AdminSettings({ settings, onSave }) {
               settings={form.ai.feedback}
               onChange={update}
             />
-            <Button onClick={async () => { await onSave({ ...form, donation: { ...form.donation, enabled: true } }); setStatus("저장했습니다."); }}>모델 설정 저장</Button>
+            <Button
+              onClick={async () => {
+                try {
+                  await onSave(form);
+                  setStatus("저장했습니다.");
+                } catch {
+                  setStatus("저장하지 못했습니다. 네트워크와 권한을 확인해 주세요.");
+                }
+              }}
+            >
+              모델 설정 저장
+            </Button>
             {status ? <p className="text-sm text-muted-foreground">{status}</p> : null}
           </div>
         </AccordionContent>
