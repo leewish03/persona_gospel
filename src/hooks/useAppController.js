@@ -31,7 +31,13 @@ export function useAppController() {
   const [isBusy, setIsBusy] = useState(false);
   const [reviewConfirmed, setReviewConfirmed] = useState(true);
   const [history, setHistory] = useState({ items: [], stats: null, filters: {}, detail: null, loading: false });
-  const [admin, setAdmin] = useState({ data: null, filters: { q: "", status: "", from: "", to: "" }, loading: false });
+  const [admin, setAdmin] = useState({
+    data: null,
+    filters: { q: "", status: "", from: "", to: "" },
+    loading: false,
+    conversationDetail: null,
+    userEditor: null
+  });
   const [shareNotice, setShareNotice] = useState("");
   const [pendingDialog, setPendingDialog] = useState(null);
 
@@ -156,27 +162,131 @@ export function useAppController() {
 
   const loadAdmin = useCallback(async (filters = admin.filters) => {
     if (!isAdmin) return;
-    setAdmin((value) => ({ ...value, filters, loading: true }));
+    setAdmin((value) => ({
+      ...value,
+      filters,
+      loading: true,
+      conversationDetail: null,
+      userEditor: null
+    }));
     try {
       const query = new URLSearchParams();
       if (filters.q) query.set("q", filters.q);
       if (filters.status) query.set("status", filters.status);
       if (filters.from) query.set("from", filters.from);
       if (filters.to) query.set("to", filters.to);
-      const userQuery = filters.q ? `?q=${encodeURIComponent(filters.q)}&limit=50` : "?limit=50";
+      const userQuery = filters.q ? `?q=${encodeURIComponent(filters.q)}&limit=200` : "?limit=200";
       const [summary, users, conversations, usage, settings] = await Promise.all([
         getJson("/api/admin/summary"),
         getJson(`/api/admin/users${userQuery}`),
-        getJson(`/api/admin/conversations?${query}&limit=50`),
-        getJson(`/api/admin/usage?${query}&limit=200`),
+        getJson(`/api/admin/conversations?${query}&limit=200`),
+        getJson(`/api/admin/usage?${query}&limit=500`),
         getJson("/api/admin/settings")
       ]);
-      setAdmin({ filters, loading: false, data: { summary, users, conversations, usage, settings } });
+      setAdmin((value) => ({
+        ...value,
+        filters,
+        loading: false,
+        data: { summary, users, conversations, usage, settings }
+      }));
     } catch (error) {
       setErrors((value) => ({ ...value, global: error.message }));
       setAdmin((value) => ({ ...value, loading: false }));
     }
   }, [admin.filters, isAdmin]);
+
+  const loadAdminConversationDetail = useCallback(async (id) => {
+    if (!isAdmin || !id) return;
+    setAdmin((value) => ({
+      ...value,
+      userEditor: null,
+      conversationDetail: { id, loading: true, conversation: null, error: "" }
+    }));
+    try {
+      const data = await getJson(`/api/admin/conversations/${encodeURIComponent(id)}`);
+      setAdmin((value) => ({
+        ...value,
+        conversationDetail: { id, loading: false, conversation: data.conversation, error: "" }
+      }));
+    } catch (error) {
+      setErrors((value) => ({ ...value, global: error.message }));
+      setAdmin((value) => ({
+        ...value,
+        conversationDetail: { id, loading: false, conversation: null, error: error.message || "불러오기 실패" }
+      }));
+    }
+  }, [isAdmin]);
+
+  const closeAdminConversationDetail = useCallback(() => {
+    setAdmin((value) => ({ ...value, conversationDetail: null }));
+  }, []);
+
+  const openAdminUserEditor = useCallback((user) => {
+    setAdmin((value) => ({
+      ...value,
+      conversationDetail: null,
+      userEditor: {
+        id: user.id,
+        email: user.email || "",
+        displayName: user.displayName || "",
+        role: user.role || "user",
+        profile: cleanProfile(user.profile || {}),
+        saving: false
+      }
+    }));
+  }, []);
+
+  const setAdminUserEditor = useCallback((patch) => {
+    setAdmin((value) => {
+      if (!value.userEditor) return value;
+      return { ...value, userEditor: { ...value.userEditor, ...patch } };
+    });
+  }, []);
+
+  const setAdminUserEditorProfile = useCallback((patch) => {
+    setAdmin((value) => {
+      if (!value.userEditor) return value;
+      return {
+        ...value,
+        userEditor: {
+          ...value.userEditor,
+          profile: { ...value.userEditor.profile, ...patch }
+        }
+      };
+    });
+  }, []);
+
+  const closeAdminUserEditor = useCallback(() => {
+    setAdmin((value) => ({ ...value, userEditor: null }));
+  }, []);
+
+  const saveAdminUser = useCallback(async () => {
+    const ed = admin.userEditor;
+    if (!ed) return;
+    const selfId = auth.user?.id;
+    setAdmin((value) => (value.userEditor ? { ...value, userEditor: { ...value.userEditor, saving: true } } : value));
+    try {
+      await putJson(`/api/admin/users/${encodeURIComponent(ed.id)}`, {
+        displayName: ed.displayName,
+        profile: ed.profile,
+        role: ed.role
+      });
+      await loadAdmin();
+      if (selfId && ed.id === selfId) {
+        try {
+          const me = await getJson("/api/me");
+          setAuth((v) => ({ ...v, user: me.user }));
+        } catch {
+          /* ignore */
+        }
+      }
+    } catch (error) {
+      setErrors((value) => ({ ...value, global: error.message }));
+      setAdmin((value) =>
+        value.userEditor ? { ...value, userEditor: { ...value.userEditor, saving: false } } : value
+      );
+    }
+  }, [admin.userEditor, auth.user?.id, loadAdmin]);
 
   useEffect(() => {
     async function init() {
@@ -534,6 +644,13 @@ export function useAppController() {
       loadHistory,
       loadHistoryDetail,
       loadAdmin,
+      loadAdminConversationDetail,
+      closeAdminConversationDetail,
+      openAdminUserEditor,
+      closeAdminUserEditor,
+      setAdminUserEditor,
+      setAdminUserEditorProfile,
+      saveAdminUser,
       saveAdminSettings,
       shareFeedback,
       handlePrimaryAction,

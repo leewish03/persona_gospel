@@ -7,6 +7,7 @@
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
     "check": "node --check server.js && vite build",
+    "smoke": "node scripts/smoke-api.mjs",
     "start": "node server.js"
   },
   "engines": {

@@ -37,6 +37,7 @@
   --sidebar-border: var(--border);
   --sidebar-ring: var(--ring);
   --app-vvh: 100dvh;
+  --keyboard-inset: 0px;
 }
 
 @theme inline {

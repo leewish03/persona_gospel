@@ -32,6 +32,15 @@ import {
   AccordionItem,
   AccordionTrigger
 } from "@/components/ui/accordion";
+import {
+  Drawer,
+  DrawerClose,
+  DrawerContent,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle
+} from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
@@ -85,6 +94,9 @@ function AppShell({ state, actions, children }) {
   const primaryLabel = state.currentScreen === "review" && !state.reviewConfirmed ? "내용 확인" : meta.action;
   const showBottom = !isHome && !actionless && !(state.currentScreen === "chat" && state.sessionStarted);
   const showTabs = state.hasUser && state.profileComplete && !["login", "profile"].includes(state.currentScreen);
+  const chatUserTurns = state.messages.filter((m) => m.role === "user").length;
+  const canFeedbackFromChat = chatUserTurns > 0 && !state.isBusy && state.sessionStarted;
+  const headerTrailingChat = state.currentScreen === "chat" && state.sessionStarted;
 
   useEffect(() => {
     const root = document.documentElement;
@@ -92,6 +104,12 @@ function AppShell({ state, actions, children }) {
     const sync = () => {
       const height = vv ? vv.height : window.innerHeight;
       root.style.setProperty("--app-vvh", `${Math.max(1, Math.round(height))}px`);
+      if (vv) {
+        const inset = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
+        root.style.setProperty("--keyboard-inset", `${inset}px`);
+      } else {
+        root.style.setProperty("--keyboard-inset", "0px");
+      }
     };
     sync();
     if (!vv) {
@@ -109,52 +127,70 @@ function AppShell({ state, actions, children }) {
   }, []);
 
   return (
-    <main className={cn("mx-auto grid h-[var(--app-vvh)] max-h-[var(--app-vvh)] w-full max-w-[480px] overflow-hidden bg-background shadow-2xl ring-1 ring-border/60", isHome ? "grid-rows-[minmax(0,1fr)]" : "grid-rows-[auto_auto_minmax(0,1fr)_auto_auto]")}>
-      {isHome ? null : (
-        <header className="grid grid-cols-[44px_minmax(0,1fr)_58px] items-center gap-2 border-b bg-card/80 px-4 pb-3 pt-4 backdrop-blur">
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="이전 단계"
-            className="rounded-full disabled:bg-muted disabled:text-muted-foreground"
-            disabled={state.isBusy || (state.currentScreen === "chat" && state.sessionStarted)}
-            onClick={actions.previousScreen}
-          >
-            <ChevronLeft />
-          </Button>
-          <div className="min-w-0 text-center">
-            <p className="text-xs font-black uppercase text-primary">{meta.eyebrow}</p>
-            <h1 className="truncate text-base font-black">{meta.title}</h1>
-          </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="rounded-full font-black disabled:bg-muted disabled:text-muted-foreground"
-            disabled={state.isBusy}
-            onClick={actions.resetAll}
-          >
-            처음
-          </Button>
-        </header>
-      )}
-      {isHome ? null : <Progress value={state.setupProgress} className="mx-4 h-1 w-auto" />}
-      <section className={cn("min-h-0 overscroll-y-contain", isHome ? "overflow-hidden p-0" : "overflow-y-auto p-4")}>{children}</section>
-      {state.currentScreen === "chat" ? <ChatComposer state={state} actions={actions} /> : null}
-      {showBottom ? (
-        <footer className={cn("grid gap-2 border-t bg-card/95 p-4 shadow-[0_-12px_32px_rgba(23,33,31,0.08)]", meta.secondary && "grid-cols-2")}>
-          <Button disabled={state.isBusy || (state.currentScreen === "review" && !state.reviewConfirmed && false)} onClick={actions.handlePrimaryAction}>
-            {primaryLabel}
-          </Button>
-          {meta.secondary ? (
-            <Button variant="secondary" disabled={state.isBusy} onClick={actions.handleSecondaryAction}>
-              {meta.secondary}
-            </Button>
-          ) : null}
-        </footer>
-      ) : null}
-      {showTabs ? <TabBar state={state} actions={actions} /> : null}
+    <>
+      <div className="relative mx-auto h-[var(--app-vvh)] max-h-[var(--app-vvh)] w-full max-w-[480px] overflow-hidden bg-background shadow-2xl ring-1 ring-border/60">
+        {isHome ? (
+          <main className="flex h-full min-h-0 flex-col overflow-hidden">{children}</main>
+        ) : (
+          <main className={cn("flex h-full min-h-0 flex-col overflow-hidden", showTabs && "pb-[calc(4.25rem+env(safe-area-inset-bottom))]")}>
+            <header className="grid shrink-0 grid-cols-[44px_minmax(0,1fr)_minmax(0,auto)] items-center gap-2 border-b bg-card/80 px-4 pb-3 pt-4 backdrop-blur">
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="이전 단계"
+                className="rounded-full disabled:bg-muted disabled:text-muted-foreground"
+                disabled={state.isBusy || (state.currentScreen === "chat" && state.sessionStarted)}
+                onClick={actions.previousScreen}
+              >
+                <ChevronLeft />
+              </Button>
+              <div className="min-w-0 text-center">
+                <p className="text-xs font-black uppercase text-primary">{meta.eyebrow}</p>
+                <h1 className="truncate text-base font-black">{meta.title}</h1>
+              </div>
+              {headerTrailingChat ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="max-w-[5.5rem] shrink-0 rounded-full px-2 text-xs font-black disabled:bg-muted disabled:text-muted-foreground"
+                  disabled={!canFeedbackFromChat}
+                  onClick={actions.finishSession}
+                >
+                  피드백
+                </Button>
+              ) : (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="rounded-full font-black disabled:bg-muted disabled:text-muted-foreground"
+                  disabled={state.isBusy}
+                  onClick={actions.resetAll}
+                >
+                  처음
+                </Button>
+              )}
+            </header>
+            <Progress value={state.setupProgress} className="mx-4 h-1 w-auto shrink-0" />
+            <section className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain p-4">{children}</section>
+            {state.currentScreen === "chat" ? <ChatComposer state={state} actions={actions} /> : null}
+            {showBottom ? (
+              <footer className={cn("grid shrink-0 gap-2 border-t bg-card/95 p-4 shadow-[0_-12px_32px_rgba(23,33,31,0.08)]", meta.secondary && "grid-cols-2")}>
+                <Button disabled={state.isBusy || (state.currentScreen === "review" && !state.reviewConfirmed && false)} onClick={actions.handlePrimaryAction}>
+                  {primaryLabel}
+                </Button>
+                {meta.secondary ? (
+                  <Button variant="secondary" disabled={state.isBusy} onClick={actions.handleSecondaryAction}>
+                    {meta.secondary}
+                  </Button>
+                ) : null}
+              </footer>
+            ) : null}
+          </main>
+        )}
+        {showTabs ? <TabBar state={state} actions={actions} /> : null}
+      </div>
       <PendingActionDialog state={state} actions={actions} />
-    </main>
+    </>
   );
 }
 
@@ -202,7 +238,11 @@ function TabBar({ state, actions }) {
     ...(state.isAdmin ? [{ key: "admin", label: "관리", icon: Shield }] : [])
   ];
   return (
-    <nav className="grid auto-cols-fr grid-flow-col gap-2 border-t bg-card/95 px-3 py-2 shadow-[0_-10px_24px_rgba(23,33,31,0.08)]" aria-label="하단 내비게이션">
+    <nav
+      className="fixed left-1/2 z-40 grid w-full max-w-[480px] -translate-x-1/2 auto-cols-fr grid-flow-col gap-2 border-t bg-card/95 px-3 pb-[max(env(safe-area-inset-bottom),0.5rem))] pt-2 shadow-[0_-10px_24px_rgba(23,33,31,0.08)] backdrop-blur"
+      style={{ bottom: "var(--keyboard-inset, 0px)" }}
+      aria-label="하단 내비게이션"
+    >
       {tabs.map((tab) => {
         const Icon = tab.icon;
         const active = tab.key === state.currentScreen || (tab.key === "home" && ["persona", "context", "review", "chat", "feedback"].includes(state.currentScreen));
@@ -214,8 +254,17 @@ function TabBar({ state, actions }) {
             className={cn("h-14 flex-col gap-1 rounded-2xl text-xs font-black", active && "border border-primary/20 bg-primary text-primary-foreground shadow-sm hover:bg-primary/90")}
             disabled={state.isBusy}
             onClick={() => {
-              if (tab.key === "home" && state.sessionStarted) actions.goTo("chat");
-              else actions.goTo(tab.key);
+              if (tab.key === "home") {
+                if (active && state.sessionStarted && state.currentScreen === "chat") {
+                  actions.resetAll();
+                  return;
+                }
+                if (state.sessionStarted) {
+                  actions.goTo("chat");
+                  return;
+                }
+              }
+              actions.goTo(tab.key);
             }}
           >
             <Icon />
@@ -419,10 +468,9 @@ function MessageBubble({ message, persona, typing }) {
 
 function ChatComposer({ state, actions }) {
   const [draft, setDraft] = useState("");
-  const userTurns = state.messages.filter((message) => message.role === "user").length;
   const labels = sessionLabels(state.currentSession, state.personas);
+  const goalHint = labels.goal?.trim();
   const canSend = draft.trim() && !state.isBusy && state.sessionStarted;
-  const canFinish = userTurns > 0 && !state.isBusy && state.sessionStarted;
   const submit = (event) => {
     event.preventDefault();
     if (!canSend) return;
@@ -430,17 +478,13 @@ function ChatComposer({ state, actions }) {
     setDraft("");
   };
   return (
-    <form className="grid shrink-0 grid-cols-[minmax(0,1fr)_68px] gap-2 border-t bg-card/95 p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] shadow-[0_-12px_32px_rgba(23,33,31,0.08)]" onSubmit={submit}>
-      {labels.goal ? (
-        <div className="col-span-full px-1 pb-0.5">
-          <p className="truncate text-center text-[0.7rem] font-semibold text-muted-foreground">{labels.goal}</p>
-        </div>
-      ) : null}
+    <form className="grid shrink-0 grid-cols-[minmax(0,1fr)_68px] items-end gap-2 border-t bg-card/95 p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] shadow-[0_-12px_32px_rgba(23,33,31,0.08)]" onSubmit={submit}>
       <Textarea
         value={draft}
         disabled={state.isBusy || !state.sessionStarted}
-        placeholder="상대에게 건넬 말"
-        className="min-h-12 resize-none rounded-2xl bg-background"
+        placeholder={goalHint || "상대에게 건넬 말"}
+        title={goalHint || undefined}
+        className="min-h-10 resize-none rounded-2xl bg-background py-2 text-sm leading-snug"
         onChange={(event) => setDraft(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
@@ -452,10 +496,9 @@ function ChatComposer({ state, actions }) {
           }
         }}
       />
-      <div className="grid gap-2">
-        <Button type="submit" disabled={!canSend}>전송</Button>
-        <Button type="button" variant="secondary" disabled={!canFinish} onClick={actions.finishSession}>피드백</Button>
-      </div>
+      <Button className="self-end" type="submit" disabled={!canSend}>
+        전송
+      </Button>
     </form>
   );
 }
@@ -613,18 +656,54 @@ function AdminScreen({ state, actions }) {
   const monthlyBudget = Number(cost.monthlyBudgetKrw || 0);
   const budgetRate = monthlyBudget ? percentOf(monthlyCost, monthlyBudget) : 0;
   const warning = monthlyBudget && budgetRate >= 80;
+  const byType = summary.byType || {};
+  const convDetail = state.admin.conversationDetail;
+  const userEditor = state.admin.userEditor;
   return (
     <div className="grid gap-4">
-      <Card className="border-primary/30 bg-primary text-primary-foreground">
-        <CardHeader>
-          <CardTitle>관리자가 바로 계산해야 할 지표</CardTitle>
-          <CardDescription className="text-primary-foreground/80">사용량, 비용, 완료율을 한 화면에서 확인합니다.</CardDescription>
-          <CardAction><Badge variant="secondary">{formatKrw(monthlyCost)}</Badge></CardAction>
-        </CardHeader>
-      </Card>
-      {warning ? <Alert variant="destructive"><AlertCircle /><AlertTitle>예산 경고</AlertTitle><AlertDescription>월 예산의 {formatPercent(budgetRate)}를 사용했습니다.</AlertDescription></Alert> : null}
       <Card>
-        <CardContent className="grid gap-3 pt-6">
+        <CardHeader>
+          <CardTitle>운영 요약</CardTitle>
+          <CardDescription>비용·호출량·가입 규모를 문장으로 묶었습니다. 정확한 비교 수치는 바로 아래 지표 카드에서 확인하세요.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-2 text-sm leading-relaxed text-muted-foreground">
+          <p>
+            이번 달 예상 비용은 <strong className="text-foreground">{formatKrw(monthlyCost)}</strong>
+            {monthlyBudget ? (
+              <>
+                {" "}
+                이며, 설정된 월 예산 {formatKrw(monthlyBudget)} 대비 <strong className="text-foreground">{formatPercent(budgetRate)}</strong>를 사용했습니다.
+              </>
+            ) : (
+              <>입니다. 모델 설정에서 월 예산을 넣으면 사용률·남은 금액·경고가 함께 계산됩니다.</>
+            )}
+          </p>
+          <p>
+            이번 달 생성형 호출은 약 <strong className="text-foreground">{formatCount(summary.monthlyEvents ?? 0)}</strong>건
+            {` (채팅 시작 ${formatCount(byType.chat_start || 0)} · 메시지 ${formatCount(byType.chat_message || 0)} · 피드백 ${formatCount(byType.feedback || 0)})`}
+            입니다.
+          </p>
+          <p>
+            가입자 <strong className="text-foreground">{formatCount(summary.users)}</strong>명 · 누적 훈련{" "}
+            <strong className="text-foreground">{formatCount(summary.conversations)}</strong>건 중 완료{" "}
+            <strong className="text-foreground">{formatCount(summary.finishedConversations)}</strong>건입니다.
+          </p>
+        </CardContent>
+      </Card>
+      <div className="grid grid-cols-2 gap-3">
+        <Metric label="가입 사용자" value={formatCount(summary.users)} detail={`프로필 완료 ${formatPercent(percentOf(summary.completedProfiles, summary.users))}`} />
+        <Metric label="전체 훈련" value={formatCount(summary.conversations)} detail={`완료율 ${formatPercent(percentOf(summary.finishedConversations, summary.conversations))}`} />
+        <Metric label="이번 달 훈련" value={formatCount(summary.thisMonthConversations)} detail={`오늘 ${formatCount(summary.todayConversations)}회`} />
+        <Metric label="예산 사용률" value={monthlyBudget ? formatPercent(budgetRate) : "미설정"} detail={monthlyBudget ? `남은 예산 ${formatKrw(Math.max(0, monthlyBudget - monthlyCost))}` : "월 예산 설정 필요"} />
+      </div>
+      {warning ? <Alert variant="destructive"><AlertCircle /><AlertTitle>예산 경고</AlertTitle><AlertDescription>월 예산의 {formatPercent(budgetRate)}를 사용했습니다.</AlertDescription></Alert> : null}
+      <AdminSettings settings={settings.settings || {}} onSave={actions.saveAdminSettings} />
+      <Card>
+        <CardHeader>
+          <CardTitle>목록·그래프 필터</CardTitle>
+          <CardDescription>사용자·훈련·비용 이벤트 목록과 일자별 비용 그래프에 동일한 조건이 적용됩니다. (훈련 목록은 최대 200건, 비용 이벤트는 최대 500건까지 불러옵니다.)</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3">
           <Input placeholder="사용자/모델/훈련 검색" value={filters.q || ""} onChange={(event) => setFilters((value) => ({ ...value, q: event.target.value }))} />
           <div className="grid gap-3 rounded-2xl border bg-muted/40 p-3">
             <div className="grid gap-2">
@@ -640,16 +719,156 @@ function AdminScreen({ state, actions }) {
           <Button className="rounded-full" onClick={() => actions.loadAdmin(filters)}>필터 적용</Button>
         </CardContent>
       </Card>
-      <AdminSettings settings={settings.settings || {}} onSave={actions.saveAdminSettings} />
-      <div className="grid grid-cols-2 gap-3">
-        <Metric label="가입 사용자" value={formatCount(summary.users)} detail={`프로필 완료 ${formatPercent(percentOf(summary.completedProfiles, summary.users))}`} />
-        <Metric label="전체 훈련" value={formatCount(summary.conversations)} detail={`완료율 ${formatPercent(percentOf(summary.finishedConversations, summary.conversations))}`} />
-        <Metric label="이번 달 훈련" value={formatCount(summary.thisMonthConversations)} detail={`오늘 ${formatCount(summary.todayConversations)}회`} />
-        <Metric label="예산 사용률" value={monthlyBudget ? formatPercent(budgetRate) : "미설정"} detail={monthlyBudget ? `남은 예산 ${formatKrw(Math.max(0, monthlyBudget - monthlyCost))}` : "월 예산 설정 필요"} />
-      </div>
       <UsageChart usage={usage} />
-      <AdminTables state={state} users={users.users || []} conversations={conversations.conversations || []} usage={usage} />
+      <AdminTables state={state} users={users.users || []} conversations={conversations.conversations || []} usage={usage} actions={actions} />
+      <AdminConversationDrawer detail={convDetail} personas={state.personas} onClose={actions.closeAdminConversationDetail} />
+      <AdminUserEditorDrawer editor={userEditor} actions={actions} />
     </div>
+  );
+}
+
+function AdminConversationDrawer({ detail, personas, onClose }) {
+  const open = Boolean(detail);
+  const conv = detail?.conversation;
+  const labels = conv ? sessionLabels(conv.session, personas) : null;
+  return (
+    <Drawer open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
+      <DrawerContent className="max-h-[90vh]">
+        <DrawerHeader>
+          <DrawerTitle>훈련·피드백 상세</DrawerTitle>
+          <DrawerDescription>
+            {conv && labels ? `${labels.persona} · ${formatDate(conv.createdAt)} · ${conv.status === "finished" ? "완료" : "진행 중"}` : "관리자 권한으로 대화 전문과 피드백을 확인합니다."}
+          </DrawerDescription>
+        </DrawerHeader>
+        <div className="max-h-[60vh] overflow-y-auto px-4 pb-2">
+          {detail?.loading ? <p className="text-sm text-muted-foreground">불러오는 중입니다.</p> : null}
+          {detail?.error ? (
+            <Alert variant="destructive">
+              <AlertCircle />
+              <AlertTitle>불러오기 실패</AlertTitle>
+              <AlertDescription>{detail.error}</AlertDescription>
+            </Alert>
+          ) : null}
+          {conv && labels ? (
+            <div className="grid gap-4 pb-4">
+              <div className="grid gap-1 text-sm text-muted-foreground">
+                <p><b className="text-foreground">사용자</b> {conv.user?.name || conv.user?.email || "—"}</p>
+                <p>{labels.relationship} · {labels.setting}</p>
+                <p><b className="text-foreground">훈련 초점</b> {labels.goal}</p>
+              </div>
+              <Card>
+                <CardHeader className="pb-2"><CardTitle className="text-base">대화 전문</CardTitle></CardHeader>
+                <CardContent className="grid gap-2">
+                  {(conv.messages || []).map((message, index) => (
+                    <p key={index} className={cn("rounded-xl bg-muted p-3 text-sm whitespace-pre-wrap", message.role === "user" && "bg-yellow-100")}>
+                      <b>{message.role === "user" ? "훈련자" : labels.persona}</b>
+                      <br />
+                      {message.content}
+                    </p>
+                  ))}
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className="pb-2"><CardTitle className="text-base">피드백 리포트</CardTitle></CardHeader>
+                <CardContent className="feedback-content text-sm" dangerouslySetInnerHTML={{ __html: conv.feedbackText ? markdownToHtml(conv.feedbackText) : "<p>아직 피드백이 없습니다.</p>" }} />
+              </Card>
+            </div>
+          ) : null}
+        </div>
+        <DrawerFooter>
+          <DrawerClose asChild>
+            <Button type="button" variant="secondary">닫기</Button>
+          </DrawerClose>
+        </DrawerFooter>
+      </DrawerContent>
+    </Drawer>
+  );
+}
+
+function AdminUserEditorDrawer({ editor, actions }) {
+  return (
+    <Drawer open={Boolean(editor)} onOpenChange={(next) => { if (!next) actions.closeAdminUserEditor(); }}>
+      {editor ? (
+        <DrawerContent className="max-h-[92vh]">
+          <DrawerHeader>
+            <DrawerTitle>사용자 정보</DrawerTitle>
+            <DrawerDescription>표시 이름·프로필·역할을 수정합니다. 이메일은 로그인 식별용으로 여기서 바꿀 수 없습니다.</DrawerDescription>
+          </DrawerHeader>
+          <div className="max-h-[58vh] overflow-y-auto px-4 pb-2">
+            <div className="grid gap-3 text-sm">
+              <p className="rounded-xl bg-muted/60 px-3 py-2 text-muted-foreground"><b className="text-foreground">이메일</b> {editor.email}</p>
+              <div className="grid gap-2">
+                <Label htmlFor="admin-user-display">표시 이름</Label>
+                <Input
+                  id="admin-user-display"
+                  value={editor.displayName}
+                  onChange={(e) => actions.setAdminUserEditor({ displayName: e.target.value })}
+                />
+              </div>
+              <SelectControl
+                id="admin-user-role"
+                label="역할"
+                value={editor.role}
+                onChange={(role) => actions.setAdminUserEditor({ role })}
+                placeholder="역할"
+                options={[
+                  { value: "user", label: "일반 사용자" },
+                  { value: "admin", label: "관리자" }
+                ]}
+              />
+              <div className="grid gap-2">
+                <Label htmlFor="admin-user-name">이름</Label>
+                <Input
+                  id="admin-user-name"
+                  value={editor.profile.name}
+                  onChange={(e) => actions.setAdminUserEditorProfile({ name: e.target.value })}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="admin-user-age">나이</Label>
+                <Input
+                  id="admin-user-age"
+                  value={editor.profile.age}
+                  onChange={(e) => actions.setAdminUserEditorProfile({ age: e.target.value })}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="admin-user-gender">성별</Label>
+                <Input
+                  id="admin-user-gender"
+                  value={editor.profile.gender}
+                  onChange={(e) => actions.setAdminUserEditorProfile({ gender: e.target.value })}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="admin-user-church">소속 교회</Label>
+                <Input
+                  id="admin-user-church"
+                  value={editor.profile.church}
+                  onChange={(e) => actions.setAdminUserEditorProfile({ church: e.target.value })}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="admin-user-usecase">사용 용도</Label>
+                <Input
+                  id="admin-user-usecase"
+                  value={editor.profile.useCase}
+                  onChange={(e) => actions.setAdminUserEditorProfile({ useCase: e.target.value })}
+                />
+              </div>
+            </div>
+          </div>
+          <DrawerFooter className="gap-2">
+            <Button type="button" disabled={editor.saving} onClick={() => void actions.saveAdminUser()}>
+              {editor.saving ? "저장 중…" : "저장"}
+            </Button>
+            <DrawerClose asChild>
+              <Button type="button" variant="outline">취소</Button>
+            </DrawerClose>
+          </DrawerFooter>
+        </DrawerContent>
+      ) : null}
+    </Drawer>
   );
 }
 
@@ -675,7 +894,7 @@ function UsageChart({ usage }) {
     <Card>
       <CardHeader>
         <CardTitle>기간별 비용 그래프</CardTitle>
-        <CardDescription>필터 기간의 일자별 예상 비용입니다.</CardDescription>
+        <CardDescription>필터 기간의 일자별 예상 비용입니다. OpenAI는 env 단가, Anthropic은 모델별 Sonnet/Opus/Haiku MTok 단가(2026-05 문서 기준 기본값, env로 조정)로 추정합니다.</CardDescription>
       </CardHeader>
       <CardContent>
         <ChartContainer config={chartConfig} className="h-[300px] min-h-[300px] w-full">
@@ -691,7 +910,7 @@ function UsageChart({ usage }) {
   );
 }
 
-function AdminTables({ state, users, conversations, usage }) {
+function AdminTables({ state, users, conversations, usage, actions }) {
   return (
     <Accordion type="multiple" defaultValue={["users", "conversations", "usage"]} className="grid gap-3">
       <AdminAccordion value="users" title="사용자별 사용량">
@@ -701,16 +920,25 @@ function AdminTables({ state, users, conversations, usage }) {
               key={user.id}
               title={user.profile?.name || user.displayName || user.email}
               subtitle={user.email}
+              badge={user.role === "admin" ? <Badge variant="secondary">관리자</Badge> : null}
               items={[
+                ["역할", user.role === "admin" ? "관리자" : "일반"],
+                ["프로필", user.profileComplete ? "완료" : "미완료"],
+                ["교회", user.profile?.church || "—"],
                 ["훈련", `${formatCount(user.conversationCount)}회`],
                 ["월 비용", formatKrw(user.usage?.estimatedMonthlyCostKrw)]
               ]}
+              footer={
+                <Button type="button" variant="outline" size="sm" className="w-full rounded-full" onClick={() => actions.openAdminUserEditor(user)}>
+                  사용자 정보 편집
+                </Button>
+              }
             />
           ))}
           {!users.length ? <p className="rounded-xl border bg-muted/40 p-3 text-sm text-muted-foreground">사용자가 없습니다.</p> : null}
         </div>
       </AdminAccordion>
-      <AdminAccordion value="conversations" title="최근 훈련">
+      <AdminAccordion value="conversations" title="훈련·피드백 기록">
         <div className="grid gap-2">
           {conversations.map((item) => {
             const labels = sessionLabels(item.session, state.personas);
@@ -718,26 +946,40 @@ function AdminTables({ state, users, conversations, usage }) {
               <AdminListRow
                 key={item.id}
                 title={item.user?.name || item.user?.email || "사용자"}
-                subtitle={`${labels.persona} · ${labels.goal}`}
+                subtitle={`${labels.persona} · ${formatDate(item.createdAt)}`}
                 badge={<Badge variant={item.status === "finished" ? "outline" : "secondary"}>{item.status === "finished" ? "완료" : "진행"}</Badge>}
                 items={[
+                  ["훈련 초점", labels.goal],
                   ["관계/상황", `${labels.relationship} · ${labels.setting}`],
-                  ["메시지", `${formatCount(item.messageCount)}개`]
+                  ["메시지", `${formatCount(item.messageCount)}개`],
+                  ["피드백 요약", item.feedbackSummary || "—"]
                 ]}
+                footer={
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="w-full rounded-full"
+                    onClick={() => void actions.loadAdminConversationDetail(item.id)}
+                  >
+                    대화·피드백 전체 보기
+                  </Button>
+                }
               />
             );
           })}
           {!conversations.length ? <p className="rounded-xl border bg-muted/40 p-3 text-sm text-muted-foreground">훈련 기록이 없습니다.</p> : null}
         </div>
       </AdminAccordion>
-      <AdminAccordion value="usage" title="최근 비용 이벤트">
+      <AdminAccordion value="usage" title="비용 이벤트 (필터 구간)">
         <div className="grid gap-2">
-          {(usage.events || []).slice(0, 12).map((event) => (
+          {(usage.events || []).slice(0, 80).map((event) => (
             <AdminListRow
               key={event.id}
               title={usageEventLabel(event.eventType)}
               subtitle={formatDate(event.createdAt)}
               items={[
+                ["공급자", event.provider || "openai"],
                 ["모델", event.model || "모델 미기록"],
                 ["비용", formatKrw(event.estimatedCostKrw)]
               ]}
@@ -750,7 +992,7 @@ function AdminTables({ state, users, conversations, usage }) {
   );
 }
 
-function AdminListRow({ title, subtitle, badge, items = [] }) {
+function AdminListRow({ title, subtitle, badge, items = [], footer }) {
   return (
     <article className="grid min-w-0 gap-3 rounded-2xl border bg-background p-3">
       <div className="flex min-w-0 items-start justify-between gap-2">
@@ -762,12 +1004,13 @@ function AdminListRow({ title, subtitle, badge, items = [] }) {
       </div>
       <div className="grid gap-2">
         {items.map(([label, value]) => (
-          <div key={label} className="grid min-w-0 grid-cols-[84px_minmax(0,1fr)] gap-2 rounded-xl bg-muted/60 px-3 py-2 text-sm">
+          <div key={label} className="grid min-w-0 grid-cols-[minmax(5.5rem,auto)_minmax(0,1fr)] gap-2 rounded-xl bg-muted/60 px-3 py-2 text-sm">
             <span className="font-black text-muted-foreground">{label}</span>
             <span className="min-w-0 break-words text-right font-semibold">{value}</span>
           </div>
         ))}
       </div>
+      {footer}
     </article>
   );
 }
@@ -1008,6 +1251,13 @@ function ModelSettingsCard({ kind, title, description, settings, onChange }) {
 function AdminSettings({ settings, onSave }) {
   const [form, setForm] = useState(() => normalizeAdminSettings(settings));
   const [status, setStatus] = useState("");
+  const settingsSyncKey = JSON.stringify(settings?.ai || {}) + JSON.stringify(settings?.cost || {}) + JSON.stringify(settings?.donation || {});
+
+  useEffect(() => {
+    setForm(normalizeAdminSettings(settings));
+    setStatus("");
+  }, [settingsSyncKey]);
+
   const update = (path, value) => {
     setForm((current) => {
       const next = structuredClone(current);
