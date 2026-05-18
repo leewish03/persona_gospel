@@ -86,8 +86,30 @@ function AppShell({ state, actions, children }) {
   const showBottom = !isHome && !actionless && !(state.currentScreen === "chat" && state.sessionStarted);
   const showTabs = state.hasUser && state.profileComplete && !["login", "profile"].includes(state.currentScreen);
 
+  useEffect(() => {
+    const root = document.documentElement;
+    const vv = window.visualViewport;
+    const sync = () => {
+      const height = vv ? vv.height : window.innerHeight;
+      root.style.setProperty("--app-vvh", `${Math.max(1, Math.round(height))}px`);
+    };
+    sync();
+    if (!vv) {
+      window.addEventListener("resize", sync);
+      return () => window.removeEventListener("resize", sync);
+    }
+    vv.addEventListener("resize", sync);
+    vv.addEventListener("scroll", sync);
+    window.addEventListener("orientationchange", sync);
+    return () => {
+      vv.removeEventListener("resize", sync);
+      vv.removeEventListener("scroll", sync);
+      window.removeEventListener("orientationchange", sync);
+    };
+  }, []);
+
   return (
-    <main className={cn("mx-auto grid h-dvh max-h-dvh w-full max-w-[480px] overflow-hidden bg-background shadow-2xl ring-1 ring-border/60", isHome ? "grid-rows-[minmax(0,1fr)]" : "grid-rows-[auto_auto_minmax(0,1fr)_auto_auto]")}>
+    <main className={cn("mx-auto grid h-[var(--app-vvh)] max-h-[var(--app-vvh)] w-full max-w-[480px] overflow-hidden bg-background shadow-2xl ring-1 ring-border/60", isHome ? "grid-rows-[minmax(0,1fr)]" : "grid-rows-[auto_auto_minmax(0,1fr)_auto_auto]")}>
       {isHome ? null : (
         <header className="grid grid-cols-[44px_minmax(0,1fr)_58px] items-center gap-2 border-b bg-card/80 px-4 pb-3 pt-4 backdrop-blur">
           <Button
@@ -116,7 +138,7 @@ function AppShell({ state, actions, children }) {
         </header>
       )}
       {isHome ? null : <Progress value={state.setupProgress} className="mx-4 h-1 w-auto" />}
-      <section className={cn("min-h-0", isHome ? "overflow-hidden p-0" : "overflow-y-auto p-4")}>{children}</section>
+      <section className={cn("min-h-0 overscroll-y-contain", isHome ? "overflow-hidden p-0" : "overflow-y-auto p-4")}>{children}</section>
       {state.currentScreen === "chat" ? <ChatComposer state={state} actions={actions} /> : null}
       {showBottom ? (
         <footer className={cn("grid gap-2 border-t bg-card/95 p-4 shadow-[0_-12px_32px_rgba(23,33,31,0.08)]", meta.secondary && "grid-cols-2")}>
@@ -361,15 +383,11 @@ function InfoList({ title, items = [] }) {
 function ChatScreen({ state }) {
   const listRef = useRef(null);
   const persona = state.currentPersona;
-  const labels = sessionLabels(state.currentSession, state.personas);
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
   }, [state.messages, state.waitingForAssistant]);
   return (
-    <div ref={listRef} className="flex h-full flex-col gap-3 overflow-y-auto rounded-2xl bg-muted p-2">
-      <div className="rounded-full bg-background/80 px-3 py-2 text-center text-xs font-black text-muted-foreground">
-        {labels.persona} · {labels.relationship} · {labels.setting}
-      </div>
+    <div ref={listRef} className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto overscroll-y-contain rounded-2xl bg-muted p-2">
       {state.messages.map((message, index) => (
         <MessageBubble key={`${message.role}-${index}`} message={message} persona={persona} />
       ))}
@@ -402,7 +420,6 @@ function MessageBubble({ message, persona, typing }) {
 function ChatComposer({ state, actions }) {
   const [draft, setDraft] = useState("");
   const userTurns = state.messages.filter((message) => message.role === "user").length;
-  const assistantTurns = state.messages.filter((message) => message.role === "assistant").length;
   const labels = sessionLabels(state.currentSession, state.personas);
   const canSend = draft.trim() && !state.isBusy && state.sessionStarted;
   const canFinish = userTurns > 0 && !state.isBusy && state.sessionStarted;
@@ -413,11 +430,12 @@ function ChatComposer({ state, actions }) {
     setDraft("");
   };
   return (
-    <form className="grid grid-cols-[minmax(0,1fr)_68px] gap-2 border-t bg-card/95 p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] shadow-[0_-12px_32px_rgba(23,33,31,0.08)]" onSubmit={submit}>
-      <div className="col-span-full grid gap-1.5">
-        <span className="rounded-full bg-muted px-3 py-1.5 text-center text-xs font-black text-muted-foreground">{userTurns}턴 진행 · {assistantTurns}개 응답</span>
-        <span className="truncate px-2 text-center text-[0.72rem] font-semibold text-muted-foreground">{labels.persona} · {labels.relationship} · {labels.goal}</span>
-      </div>
+    <form className="grid shrink-0 grid-cols-[minmax(0,1fr)_68px] gap-2 border-t bg-card/95 p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] shadow-[0_-12px_32px_rgba(23,33,31,0.08)]" onSubmit={submit}>
+      {labels.goal ? (
+        <div className="col-span-full px-1 pb-0.5">
+          <p className="truncate text-center text-[0.7rem] font-semibold text-muted-foreground">{labels.goal}</p>
+        </div>
+      ) : null}
       <Textarea
         value={draft}
         disabled={state.isBusy || !state.sessionStarted}
@@ -566,6 +584,17 @@ function SettingsScreen({ state, actions }) {
         <CardContent className="grid gap-3 text-sm text-muted-foreground">
           <p>{donation.body || "이 앱의 AI 호출 비용은 운영자가 부담합니다. 지속 운영을 돕고 싶다면 자발적으로 후원할 수 있습니다."}</p>
           <Badge variant="outline">{donation.account || "후원 계좌 준비 중"}</Badge>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>문의</CardTitle>
+          <CardDescription>오류, 제안, 협력 문의는 아래 이메일로 연락해주세요.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <a className="text-sm font-semibold text-primary underline-offset-4 hover:underline" href="mailto:lekas1217@gmail.com">
+            lekas1217@gmail.com
+          </a>
         </CardContent>
       </Card>
       <Button variant="outline" onClick={actions.logout}>로그아웃</Button>
@@ -752,21 +781,36 @@ function AdminAccordion({ value, title, children }) {
   );
 }
 
-const modelPresets = {
-  chat: [
-    { value: "gpt-5.5-mini", label: "GPT 5.5 mini" },
-    { value: "gpt-5.5", label: "GPT 5.5" },
-    { value: "gpt-5.4-mini", label: "GPT 5.4 mini" },
-    { value: "gpt-5.4", label: "GPT 5.4" },
-    { value: "chat-latest", label: "Chat latest" }
-  ],
-  feedback: [
-    { value: "gpt-5.5", label: "GPT 5.5" },
-    { value: "gpt-5.5-mini", label: "GPT 5.5 mini" },
-    { value: "gpt-5.4", label: "GPT 5.4" },
-    { value: "gpt-5.4-mini", label: "GPT 5.4 mini" }
-  ]
-};
+const openaiChatModels = [
+  { value: "gpt-5.5-mini", label: "GPT 5.5 mini" },
+  { value: "gpt-5.5", label: "GPT 5.5" },
+  { value: "gpt-5.4-mini", label: "GPT 5.4 mini" },
+  { value: "gpt-5.4", label: "GPT 5.4" },
+  { value: "chat-latest", label: "Chat latest" }
+];
+
+const openaiFeedbackModels = [
+  { value: "gpt-5.5", label: "GPT 5.5" },
+  { value: "gpt-5.5-mini", label: "GPT 5.5 mini" },
+  { value: "gpt-5.4", label: "GPT 5.4" },
+  { value: "gpt-5.4-mini", label: "GPT 5.4 mini" }
+];
+
+const anthropicChatModels = [
+  { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+  { value: "claude-opus-4-7", label: "Claude Opus 4.7" },
+  { value: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
+  { value: "claude-opus-4-6", label: "Claude Opus 4.6" },
+  { value: "claude-sonnet-4-5-20250929", label: "Claude Sonnet 4.5 (스냅샷)" },
+  { value: "claude-opus-4-5-20251101", label: "Claude Opus 4.5 (스냅샷)" }
+];
+
+const anthropicFeedbackModels = [
+  { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+  { value: "claude-opus-4-7", label: "Claude Opus 4.7" },
+  { value: "claude-opus-4-6", label: "Claude Opus 4.6" },
+  { value: "claude-haiku-4-5", label: "Claude Haiku 4.5" }
+];
 
 const defaultModelSettings = {
   chat: {
@@ -777,7 +821,7 @@ const defaultModelSettings = {
     topP: "",
     reasoningEffort: "high",
     thinkingType: "disabled",
-    thinkingBudgetTokens: 0,
+    thinkingBudgetTokens: 8192,
     thinkingDisplay: "omitted"
   },
   feedback: {
@@ -788,7 +832,7 @@ const defaultModelSettings = {
     topP: "",
     reasoningEffort: "medium",
     thinkingType: "disabled",
-    thinkingBudgetTokens: 0,
+    thinkingBudgetTokens: 8192,
     thinkingDisplay: "omitted"
   }
 };
@@ -806,7 +850,30 @@ function normalizeAdminSettings(settings = {}) {
 
 function ModelSettingsCard({ kind, title, description, settings, onChange }) {
   const prefix = kind === "feedback" ? "feedback" : "chat";
+  const defaults = defaultModelSettings[prefix];
+  const merged = { ...defaults, ...settings };
+  const provider = merged.provider === "anthropic" ? "anthropic" : "openai";
+  const modelOptions =
+    provider === "anthropic"
+      ? kind === "feedback"
+        ? anthropicFeedbackModels
+        : anthropicChatModels
+      : kind === "feedback"
+        ? openaiFeedbackModels
+        : openaiChatModels;
   const update = (field, value) => onChange(`ai.${prefix}.${field}`, value);
+
+  const setProvider = (next) => {
+    update("provider", next);
+    if (next === "anthropic") {
+      const pick = kind === "feedback" ? anthropicFeedbackModels[0]?.value : anthropicChatModels[0]?.value;
+      update("model", pick || "claude-sonnet-4-6");
+    } else {
+      const pick = kind === "feedback" ? openaiFeedbackModels[0]?.value : openaiChatModels[0]?.value;
+      update("model", pick || "gpt-5.4-mini");
+    }
+  };
+
   return (
     <Card className="shadow-none">
       <CardHeader>
@@ -815,23 +882,34 @@ function ModelSettingsCard({ kind, title, description, settings, onChange }) {
       </CardHeader>
       <CardContent className="grid gap-3">
         <SelectControl
+          id={`${prefix}-provider`}
+          label="공급자"
+          value={provider}
+          onChange={setProvider}
+          placeholder="공급자 선택"
+          options={[
+            { value: "openai", label: "OpenAI" },
+            { value: "anthropic", label: "Anthropic" }
+          ]}
+        />
+        <SelectControl
           id={`${prefix}-model`}
           label="모델"
-          value={settings.model || defaultModelSettings[prefix].model}
+          value={merged.model || defaults.model}
           onChange={(model) => update("model", model)}
           placeholder="모델 선택"
-          options={modelPresets[prefix]}
+          options={modelOptions}
         />
         <div className="grid grid-cols-2 gap-3">
           <div className="grid gap-2">
-            <Label htmlFor={`${prefix}-max-output`}>최대 출력</Label>
+            <Label htmlFor={`${prefix}-max-output`}>최대 출력 토큰</Label>
             <Input
               id={`${prefix}-max-output`}
               type="number"
               min="1"
               max="64000"
-              value={settings.maxOutputTokens || defaultModelSettings[prefix].maxOutputTokens}
-              onChange={(event) => update("maxOutputTokens", Number(event.target.value || defaultModelSettings[prefix].maxOutputTokens))}
+              value={merged.maxOutputTokens ?? defaults.maxOutputTokens}
+              onChange={(event) => update("maxOutputTokens", Number(event.target.value || defaults.maxOutputTokens))}
             />
           </div>
           <div className="grid gap-2">
@@ -842,13 +920,86 @@ function ModelSettingsCard({ kind, title, description, settings, onChange }) {
               min="0"
               max="2"
               step="0.1"
-              value={settings.temperature ?? ""}
-              placeholder="기본"
+              value={merged.temperature ?? ""}
+              placeholder="기본값"
               onChange={(event) => update("temperature", event.target.value)}
             />
           </div>
         </div>
-        <p className="text-xs leading-5 text-muted-foreground">나머지 공급자/추론/고급 파라미터는 현재 운영 기본값으로 유지합니다.</p>
+        <div className="grid gap-2">
+          <Label htmlFor={`${prefix}-top-p`}>Top P</Label>
+          <Input
+            id={`${prefix}-top-p`}
+            type="number"
+            min="0"
+            max="1"
+            step="0.05"
+            value={merged.topP ?? ""}
+            placeholder="기본값"
+            onChange={(event) => update("topP", event.target.value)}
+          />
+        </div>
+        {provider === "openai" ? (
+          <SelectControl
+            id={`${prefix}-reasoning`}
+            label="추론 강도 (reasoning effort)"
+            value={merged.reasoningEffort || defaults.reasoningEffort}
+            onChange={(reasoningEffort) => update("reasoningEffort", reasoningEffort)}
+            placeholder="추론 강도"
+            options={[
+              { value: "none", label: "없음" },
+              { value: "minimal", label: "최소" },
+              { value: "low", label: "낮음" },
+              { value: "medium", label: "중간" },
+              { value: "high", label: "높음" },
+              { value: "xhigh", label: "매우 높음" }
+            ]}
+          />
+        ) : (
+          <div className="grid gap-3 rounded-2xl border bg-muted/30 p-3">
+            <p className="text-xs font-black uppercase text-primary">Anthropic 추론(Thinking)</p>
+            <SelectControl
+              id={`${prefix}-thinking-type`}
+              label="Thinking 유형"
+              value={merged.thinkingType || defaults.thinkingType}
+              onChange={(thinkingType) => update("thinkingType", thinkingType)}
+              placeholder="Thinking"
+              options={[
+                { value: "disabled", label: "끔" },
+                { value: "adaptive", label: "Adaptive" },
+                { value: "enabled", label: "Enabled (예산)" }
+              ]}
+            />
+            {merged.thinkingType === "enabled" ? (
+              <div className="grid gap-2">
+                <Label htmlFor={`${prefix}-thinking-budget`}>Thinking 예산 토큰</Label>
+                <Input
+                  id={`${prefix}-thinking-budget`}
+                  type="number"
+                  min="1024"
+                  max="64000"
+                  step="256"
+                  value={merged.thinkingBudgetTokens || defaults.thinkingBudgetTokens}
+                  onChange={(event) => update("thinkingBudgetTokens", Number(event.target.value || defaults.thinkingBudgetTokens))}
+                />
+                <p className="text-xs text-muted-foreground">Enabled일 때만 API에 전달됩니다. 최소 1024.</p>
+              </div>
+            ) : null}
+            {merged.thinkingType === "adaptive" ? (
+              <SelectControl
+                id={`${prefix}-thinking-display`}
+                label="Thinking 표시"
+                value={merged.thinkingDisplay || defaults.thinkingDisplay}
+                onChange={(thinkingDisplay) => update("thinkingDisplay", thinkingDisplay)}
+                placeholder="표시 방식"
+                options={[
+                  { value: "omitted", label: "생략" },
+                  { value: "summarized", label: "요약" }
+                ]}
+              />
+            ) : null}
+          </div>
+        )}
       </CardContent>
     </Card>
   );

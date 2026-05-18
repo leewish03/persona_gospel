@@ -198,6 +198,11 @@ function sanitizeModelSettings(input = {}, fallback = {}) {
     ? input.thinkingDisplay
     : fallback.thinkingDisplay || "omitted";
 
+  let thinkingBudgetTokens = cleanOptionalNumber(input.thinkingBudgetTokens, { min: 1024, max: 64000 }) || 0;
+  if (thinkingType === "enabled" && thinkingBudgetTokens < 1024) {
+    thinkingBudgetTokens = 8192;
+  }
+
   return {
     provider,
     model,
@@ -206,7 +211,7 @@ function sanitizeModelSettings(input = {}, fallback = {}) {
     topP: cleanOptionalNumber(input.topP, { min: 0, max: 1 }),
     reasoningEffort,
     thinkingType,
-    thinkingBudgetTokens: cleanOptionalNumber(input.thinkingBudgetTokens, { min: 1024, max: 64000 }) || 0,
+    thinkingBudgetTokens,
     thinkingDisplay
   };
 }
