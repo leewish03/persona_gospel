@@ -59,6 +59,7 @@ const anthropicFeedbackHaikuInput = Number(globalThis.process?.env?.ANTHROPIC_FE
 const anthropicFeedbackHaikuOutput = Number(globalThis.process?.env?.ANTHROPIC_FEEDBACK_HAIKU_OUTPUT_USD_PER_1M || anthropicChatHaikuOutput);
 const sessions = new Map();
 const oauthStates = new Map();
+const openingLineJobs = new Map();
 
 function loadLocalEnv(path) {
   if (globalThis.process?.env?.NODE_ENV === "production" || !existsSync(path)) return;
@@ -101,6 +102,9 @@ const defaultSettings = {
   cost: {
     usdToKrw,
     monthlyBudgetKrw: 0
+  },
+  openingLines: {
+    latest: null
   },
   ai: {
     chat: {
@@ -179,6 +183,7 @@ function mergeSettings(base, incoming) {
   return {
     donation: { ...(base.donation || {}), ...(incoming.donation || {}) },
     cost: { ...(base.cost || {}), ...(incoming.cost || {}) },
+    openingLines: { ...(base.openingLines || {}), ...(incoming.openingLines || {}) },
     ai: mergeAiSettings(base.ai || {}, incoming.ai || {})
   };
 }
@@ -245,8 +250,14 @@ function sanitizeSettings(input = {}) {
     ai: {
       chat: sanitizeModelSettings(merged.ai.chat, defaultSettings.ai.chat),
       feedback: sanitizeModelSettings(merged.ai.feedback, defaultSettings.ai.feedback)
-    }
+    },
+    openingLines: sanitizeOpeningLinesSettings(merged.openingLines)
   };
+}
+
+function sanitizeOpeningLinesSettings(input = {}) {
+  const latest = input?.latest && typeof input.latest === "object" ? input.latest : null;
+  return { latest: latest ? publicOpeningLineResult(latest) : null };
 }
 
 async function supabaseRequest(path, { method = "GET", body } = {}) {
@@ -823,7 +834,10 @@ function usageSummary(events = db.usageEvents) {
   const monthly = events.filter((event) => isSameMonth(event.createdAt));
   const sum = (items, key) => items.reduce((total, item) => total + Number(item[key] || 0), 0);
   const byType = Object.fromEntries(
-    ["chat_start", "chat_message", "feedback"].map((type) => [type, monthly.filter((event) => event.eventType === type).length])
+    ["chat_start", "chat_message", "feedback", "opening_line_generation"].map((type) => [
+      type,
+      monthly.filter((event) => event.eventType === type).length
+    ])
   );
   return {
     events: events.length,
@@ -1610,6 +1624,227 @@ function feedbackInputFor(session, persona, messages) {
   ].join("\n");
 }
 
+const openingLineRelationships = ["first_meeting", "acquaintance", "casual_friend", "old_friend", "prior_faith_talk"];
+const openingLineSettings = [
+  "cafe_catchup",
+  "meal_after_group",
+  "walk_after_work",
+  "late_night_dm",
+  "campus_or_office_break",
+  "concern_shared",
+  "faith_topic_arose"
+];
+const openingLineGoal = "listen_and_understand";
+
+function buildOpeningLineCases() {
+  const cases = [];
+  const edgePairs = [
+    ["first_meeting", "cafe_catchup"],
+    ["first_meeting", "campus_or_office_break"],
+    ["acquaintance", "meal_after_group"],
+    ["acquaintance", "concern_shared"],
+    ["casual_friend", "walk_after_work"],
+    ["old_friend", "late_night_dm"],
+    ["prior_faith_talk", "faith_topic_arose"]
+  ];
+
+  personas.forEach((persona, personaIndex) => {
+    const used = new Set();
+    const selected = [];
+    const addPair = (relationship, setting) => {
+      const key = `${relationship}:${setting}`;
+      if (used.has(key)) return;
+      used.add(key);
+      selected.push({ relationship, setting });
+    };
+
+    for (const [relationship, setting] of edgePairs) addPair(relationship, setting);
+    for (let settingIndex = 0; settingIndex < openingLineSettings.length; settingIndex += 1) {
+      const relationship = openingLineRelationships[(settingIndex + personaIndex * 2) % openingLineRelationships.length];
+      addPair(relationship, openingLineSettings[settingIndex]);
+    }
+    for (let relationshipIndex = 0; selected.length < 18 && relationshipIndex < openingLineRelationships.length; relationshipIndex += 1) {
+      for (let settingIndex = 0; selected.length < 18 && settingIndex < openingLineSettings.length; settingIndex += 1) {
+        const shiftedSetting = openingLineSettings[(settingIndex + personaIndex + relationshipIndex) % openingLineSettings.length];
+        addPair(openingLineRelationships[relationshipIndex], shiftedSetting);
+      }
+    }
+
+    selected.slice(0, 18).forEach((item, index) => {
+      cases.push({
+        id: `${persona.id}-${String(index + 1).padStart(2, "0")}`,
+        personaId: persona.id,
+        personaName: persona.name,
+        personaTitle: persona.title,
+        relationship: item.relationship,
+        relationshipLabel: relationshipLabels[item.relationship] || item.relationship,
+        setting: item.setting,
+        settingLabel: settingLabels[item.setting] || item.setting,
+        goal: openingLineGoal,
+        goalLabel: goalLabels[openingLineGoal] || openingLineGoal
+      });
+    });
+  });
+  return cases;
+}
+
+function firstOpeningSentence(text = "") {
+  const clean = String(text || "")
+    .replace(/\s+/g, " ")
+    .replace(/^["'“”‘’]+|["'“”‘’]+$/g, "")
+    .trim();
+  if (!clean) return "";
+  const match = clean.match(/^.{8,140}?[.!?。！？]|^.{8,140}?[.?!]|^.{1,100}(?=\s|$)/);
+  return (match?.[0] || clean.slice(0, 100)).trim();
+}
+
+function openingLineInputFor(session, persona, caseItem) {
+  return [
+    initialPromptFor(session, persona),
+    "",
+    "관리자 첫 시작 문장 생성 작업:",
+    "- 전체 대화 응답이 아니라 첫 시작 문장 1개만 출력한다.",
+    "- 관계, 상황, 페르소나의 핵심 갈등이 한 문장 안에서 자연스럽게 느껴져야 한다.",
+    "- 설명, 번호, 따옴표, 내부 분석, QA 메모는 출력하지 않는다.",
+    "- 12~38자 정도의 자연스러운 한국어 구어체 한 문장으로만 출력한다.",
+    "",
+    `케이스 ID: ${caseItem.id}`
+  ].join("\n");
+}
+
+function publicOpeningLineCase(item = {}) {
+  return {
+    id: item.id || "",
+    personaId: item.personaId || "",
+    personaName: item.personaName || "",
+    personaTitle: item.personaTitle || "",
+    relationship: item.relationship || "",
+    relationshipLabel: item.relationshipLabel || "",
+    setting: item.setting || "",
+    settingLabel: item.settingLabel || "",
+    goal: item.goal || openingLineGoal,
+    goalLabel: item.goalLabel || goalLabels[openingLineGoal],
+    openingLine: item.openingLine || "",
+    fullText: item.fullText || "",
+    provider: item.provider || "",
+    model: item.model || "",
+    inputTokens: Number(item.inputTokens || 0),
+    outputTokens: Number(item.outputTokens || 0),
+    estimatedCostKrw: Number(item.estimatedCostKrw || 0),
+    error: item.error || ""
+  };
+}
+
+function publicOpeningLineResult(result = {}) {
+  return {
+    id: result.id || "",
+    status: result.status || "unknown",
+    provider: result.provider || "",
+    model: result.model || "",
+    total: Number(result.total || 0),
+    completed: Number(result.completed || 0),
+    failed: Number(result.failed || 0),
+    startedAt: result.startedAt || "",
+    finishedAt: result.finishedAt || "",
+    generatedAt: result.generatedAt || result.finishedAt || "",
+    cases: Array.isArray(result.cases) ? result.cases.map(publicOpeningLineCase) : []
+  };
+}
+
+function publicOpeningLineJob(job = {}, { includeCases = false } = {}) {
+  const payload = {
+    id: job.id || "",
+    status: job.status || "queued",
+    provider: job.provider || "",
+    model: job.model || "",
+    total: Number(job.total || 0),
+    completed: Number(job.completed || 0),
+    failed: Number(job.failed || 0),
+    startedAt: job.startedAt || "",
+    finishedAt: job.finishedAt || "",
+    error: job.error || ""
+  };
+  if (includeCases) payload.cases = Array.isArray(job.cases) ? job.cases.map(publicOpeningLineCase) : [];
+  return payload;
+}
+
+function recentOpeningLineJobs() {
+  return [...openingLineJobs.values()]
+    .sort((a, b) => String(b.startedAt || "").localeCompare(String(a.startedAt || "")))
+    .slice(0, 5)
+    .map((job) => publicOpeningLineJob(job));
+}
+
+async function runOpeningLineJob(jobId, actor) {
+  const job = openingLineJobs.get(jobId);
+  if (!job) return;
+  const settings = modelSettingsFor("chat");
+  job.status = "running";
+  job.provider = settings.provider;
+  job.model = settings.model;
+  job.startedAt = new Date().toISOString();
+
+  try {
+    if (settings.provider !== "anthropic") {
+      throw new Error("현재 챗봇 모델 공급자가 Anthropic이 아닙니다. 관리자 모델 설정을 Claude로 바꾼 뒤 실행하세요.");
+    }
+    assertProviderKey("anthropic");
+    for (const item of job.cases) {
+      const persona = getPersona(item.personaId);
+      const session = {
+        personaId: item.personaId,
+        relationship: item.relationship,
+        setting: item.setting,
+        goal: item.goal || openingLineGoal
+      };
+      const input = openingLineInputFor(session, persona, item);
+      try {
+        const { text, usage, model, provider } = await callModelWithUsage({
+          modelType: "chat",
+          instructions: personaPrompt,
+          input
+        });
+        const usageRecord = estimateUsage(input, text, usage);
+        const cost = estimateCost({ provider, model, modelType: "chat", ...usageRecord });
+        item.openingLine = firstOpeningSentence(text);
+        item.fullText = text;
+        item.provider = provider;
+        item.model = model;
+        item.inputTokens = usageRecord.inputTokens;
+        item.outputTokens = usageRecord.outputTokens;
+        item.estimatedCostKrw = cost.estimatedCostKrw;
+        recordUsageEvent({
+          userId: actor.id,
+          eventType: "opening_line_generation",
+          provider,
+          model,
+          modelType: "chat",
+          input,
+          output: text,
+          usage
+        });
+      } catch (error) {
+        item.error = error.message || "생성 실패";
+        job.failed += 1;
+      }
+      job.completed += 1;
+      if (job.completed % 12 === 0) await saveDb();
+    }
+    job.status = job.failed ? "completed_with_errors" : "completed";
+  } catch (error) {
+    job.status = "failed";
+    job.error = error.message || "첫 문장 생성 작업 실패";
+  } finally {
+    job.finishedAt = new Date().toISOString();
+    const result = publicOpeningLineResult({
+      ...job,
+      generatedAt: job.finishedAt
+    });
+    db.settings = mergeSettings(db.settings, { openingLines: { latest: result } });
+    await saveDb();
+  }
+}
+
 async function handleGoogleAuth(res) {
   const clientId = globalThis.process?.env?.GOOGLE_CLIENT_ID;
   if (!clientId) {
@@ -1985,9 +2220,67 @@ async function handleAppApi(req, res, url) {
     const user = requireAdmin(req, res);
     if (!user) return true;
     const body = await readJson(req);
-    db.settings = sanitizeSettings(body.settings || body);
+    db.settings = sanitizeSettings(mergeSettings(db.settings, body.settings || body));
     await saveDb();
     json(res, 200, { settings: db.settings });
+    return true;
+  }
+
+  if (path === "/api/admin/opening-lines" && req.method === "GET") {
+    const user = requireAdmin(req, res);
+    if (!user) return true;
+    json(res, 200, {
+      latest: db.settings?.openingLines?.latest || null,
+      jobs: recentOpeningLineJobs()
+    });
+    return true;
+  }
+
+  if (path === "/api/admin/opening-lines" && req.method === "POST") {
+    const user = requireAdmin(req, res);
+    if (!user) return true;
+    const settings = modelSettingsFor("chat");
+    if (settings.provider !== "anthropic") {
+      json(res, 400, { error: "현재 챗봇 모델 공급자가 Anthropic이 아닙니다. 관리자 모델 설정을 Claude로 바꾼 뒤 실행하세요." });
+      return true;
+    }
+    const running = [...openingLineJobs.values()].find((job) => ["queued", "running"].includes(job.status));
+    if (running) {
+      json(res, 200, { job: publicOpeningLineJob(running, { includeCases: true }) });
+      return true;
+    }
+    const cases = buildOpeningLineCases();
+    const job = {
+      id: randomUUID(),
+      status: "queued",
+      provider: settings.provider,
+      model: settings.model,
+      total: cases.length,
+      completed: 0,
+      failed: 0,
+      startedAt: new Date().toISOString(),
+      finishedAt: "",
+      error: "",
+      cases
+    };
+    openingLineJobs.set(job.id, job);
+    setTimeout(() => {
+      void runOpeningLineJob(job.id, user);
+    }, 0);
+    json(res, 202, { job: publicOpeningLineJob(job, { includeCases: true }) });
+    return true;
+  }
+
+  const openingLineJobMatch = path.match(/^\/api\/admin\/opening-lines\/([^/]+)$/);
+  if (openingLineJobMatch && req.method === "GET") {
+    const user = requireAdmin(req, res);
+    if (!user) return true;
+    const job = openingLineJobs.get(decodeURIComponent(openingLineJobMatch[1]));
+    if (!job) {
+      json(res, 404, { error: "첫 문장 생성 작업을 찾지 못했습니다." });
+      return true;
+    }
+    json(res, 200, { job: publicOpeningLineJob(job, { includeCases: true }) });
     return true;
   }
 

@@ -4,7 +4,10 @@ import {
   BookOpen,
   CheckCircle2,
   ChevronLeft,
+  Download,
   Home,
+  Play,
+  RefreshCw,
   Settings,
   Shield
 } from "lucide-react";
@@ -679,7 +682,7 @@ function AdminScreen({ state, actions }) {
   const data = state.admin.data;
   const [filters, setFilters] = useState(state.admin.filters);
   if (!data) return <EmptyCard text="관리자 데이터를 불러오는 중입니다." />;
-  const { summary, users, conversations, usage, settings } = data;
+  const { summary, users, conversations, usage, settings, openingLines } = data;
   const cost = settings.settings?.cost || {};
   const monthlyCost = Number(summary.estimatedMonthlyCostKrw || 0);
   const monthlyBudget = Number(cost.monthlyBudgetKrw || 0);
@@ -727,6 +730,11 @@ function AdminScreen({ state, actions }) {
       </div>
       {warning ? <Alert variant="destructive"><AlertCircle /><AlertTitle>예산 경고</AlertTitle><AlertDescription>월 예산의 {formatPercent(budgetRate)}를 사용했습니다.</AlertDescription></Alert> : null}
       <AdminSettings settings={settings.settings || {}} onSave={actions.saveAdminSettings} />
+      <OpeningLinesAdminCard
+        data={openingLines || {}}
+        chatSettings={settings.settings?.ai?.chat || {}}
+        onStart={actions.startOpeningLinesJob}
+      />
       <Card>
         <CardHeader>
           <CardTitle>목록·그래프 필터</CardTitle>
@@ -1118,6 +1126,117 @@ function normalizeAdminSettings(settings = {}) {
       feedback: { ...defaultModelSettings.feedback, ...(settings.ai?.feedback || {}) }
     }
   };
+}
+
+function downloadJson(filename, data) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function OpeningLinesAdminCard({ data, chatSettings, onStart }) {
+  const latest = data.latest || null;
+  const currentJob = data.currentJob || (data.jobs || []).find((job) => ["queued", "running"].includes(job.status));
+  const active = currentJob && ["queued", "running"].includes(currentJob.status);
+  const progress = currentJob?.total ? percentOf(currentJob.completed || 0, currentJob.total) : 0;
+  const rows = latest?.cases || currentJob?.cases || [];
+  const provider = chatSettings.provider === "anthropic" ? "Anthropic" : "OpenAI";
+  const canStart = chatSettings.provider === "anthropic" && !active;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>첫 시작 문장 108개 생성</CardTitle>
+        <CardDescription>
+          관리자 모델 설정의 챗봇 공급자와 모델로 클라우드에서 실행합니다. 현재 설정: {provider} · {chatSettings.model || "모델 미설정"}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-3">
+        {chatSettings.provider !== "anthropic" ? (
+          <Alert variant="destructive">
+            <AlertCircle />
+            <AlertTitle>Claude 설정 필요</AlertTitle>
+            <AlertDescription>챗봇 모델 공급자를 Anthropic으로 저장한 뒤 실행할 수 있습니다.</AlertDescription>
+          </Alert>
+        ) : null}
+        <div className="grid grid-cols-3 gap-2">
+          <div className="rounded-xl border bg-muted/30 p-3">
+            <strong className="block text-lg font-black text-primary">{latest?.total ? formatCount(latest.total) : "없음"}</strong>
+            <span className="text-xs font-black text-muted-foreground">최근 생성</span>
+            <small className="block text-xs text-muted-foreground">{latest?.generatedAt ? formatDate(latest.generatedAt) : "아직 미생성"}</small>
+          </div>
+          <div className="rounded-xl border bg-muted/30 p-3">
+            <strong className="block text-lg font-black text-primary">{active ? `${formatCount(currentJob.completed)}/${formatCount(currentJob.total)}` : latest?.status || "대기"}</strong>
+            <span className="text-xs font-black text-muted-foreground">진행</span>
+            <small className="block text-xs text-muted-foreground">{active ? currentJob.status : "백그라운드 잡"}</small>
+          </div>
+          <div className="rounded-xl border bg-muted/30 p-3">
+            <strong className="block text-lg font-black text-primary">{formatCount((active ? currentJob.failed : latest?.failed) || 0)}</strong>
+            <span className="text-xs font-black text-muted-foreground">실패</span>
+            <small className="block text-xs text-muted-foreground">케이스 단위</small>
+          </div>
+        </div>
+        {active ? <Progress value={progress} className="h-2" /> : null}
+        {currentJob?.error ? (
+          <Alert variant="destructive">
+            <AlertCircle />
+            <AlertTitle>생성 실패</AlertTitle>
+            <AlertDescription>{currentJob.error}</AlertDescription>
+          </Alert>
+        ) : null}
+        <div className="flex flex-wrap gap-2">
+          <Button disabled={!canStart} onClick={onStart}>
+            {active ? <RefreshCw className="animate-spin" /> : <Play />}
+            {active ? "생성 중" : "108개 생성 실행"}
+          </Button>
+          <Button
+            variant="outline"
+            disabled={!latest}
+            onClick={() => latest && downloadJson(`opening-lines-${String(latest.generatedAt || "").slice(0, 10) || "latest"}.json`, latest)}
+          >
+            <Download />
+            JSON 저장
+          </Button>
+        </div>
+        {rows.length ? (
+          <div className="max-h-[28rem] overflow-auto rounded-xl border">
+            <table className="w-full min-w-[760px] border-collapse text-left text-xs">
+              <thead className="sticky top-0 bg-muted">
+                <tr>
+                  <th className="border-b p-2 font-black">#</th>
+                  <th className="border-b p-2 font-black">페르소나</th>
+                  <th className="border-b p-2 font-black">관계</th>
+                  <th className="border-b p-2 font-black">상황</th>
+                  <th className="border-b p-2 font-black">첫 문장</th>
+                  <th className="border-b p-2 font-black">비용</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((item, index) => (
+                  <tr key={item.id || index} className="align-top odd:bg-muted/30">
+                    <td className="border-b p-2 text-muted-foreground">{index + 1}</td>
+                    <td className="border-b p-2 font-semibold">{item.personaName}</td>
+                    <td className="border-b p-2">{item.relationshipLabel}</td>
+                    <td className="border-b p-2">{item.settingLabel}</td>
+                    <td className="border-b p-2">
+                      {item.error ? <span className="text-destructive">{item.error}</span> : item.openingLine || "대기 중"}
+                    </td>
+                    <td className="border-b p-2 text-muted-foreground">{item.estimatedCostKrw ? formatKrw(item.estimatedCostKrw) : "-"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">아직 생성된 첫 문장 결과가 없습니다.</p>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 function ModelSettingsCard({ kind, title, description, settings, onChange }) {

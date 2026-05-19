@@ -12,6 +12,10 @@ function cleanProfile(profile = {}) {
   return { ...profileDefaults, ...profile };
 }
 
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export function useAppController() {
   const [personas, setPersonas] = useState([]);
   const [selectedPersonaId, setSelectedPersonaId] = useState("");
@@ -176,18 +180,19 @@ export function useAppController() {
       if (filters.from) query.set("from", filters.from);
       if (filters.to) query.set("to", filters.to);
       const userQuery = filters.q ? `?q=${encodeURIComponent(filters.q)}&limit=200` : "?limit=200";
-      const [summary, users, conversations, usage, settings] = await Promise.all([
+      const [summary, users, conversations, usage, settings, openingLines] = await Promise.all([
         getJson("/api/admin/summary"),
         getJson(`/api/admin/users${userQuery}`),
         getJson(`/api/admin/conversations?${query}&limit=200`),
         getJson(`/api/admin/usage?${query}&limit=500`),
-        getJson("/api/admin/settings")
+        getJson("/api/admin/settings"),
+        getJson("/api/admin/opening-lines")
       ]);
       setAdmin((value) => ({
         ...value,
         filters,
         loading: false,
-        data: { summary, users, conversations, usage, settings }
+        data: { summary, users, conversations, usage, settings, openingLines }
       }));
     } catch (error) {
       setErrors((value) => ({ ...value, global: error.message }));
@@ -542,6 +547,56 @@ export function useAppController() {
     return data.settings;
   }, [loadAdmin]);
 
+  const startOpeningLinesJob = useCallback(async () => {
+    if (!isAdmin) return;
+    setAdmin((value) => ({
+      ...value,
+      data: value.data
+        ? { ...value.data, openingLines: { ...(value.data.openingLines || {}), currentJob: { status: "queued", completed: 0, total: 108 } } }
+        : value.data
+    }));
+    try {
+      const started = await postJson("/api/admin/opening-lines");
+      let currentJob = started.job;
+      setAdmin((value) => ({
+        ...value,
+        data: value.data
+          ? { ...value.data, openingLines: { ...(value.data.openingLines || {}), currentJob } }
+          : value.data
+      }));
+      while (currentJob?.id && ["queued", "running"].includes(currentJob.status)) {
+        await wait(2500);
+        const data = await getJson(`/api/admin/opening-lines/${encodeURIComponent(currentJob.id)}`);
+        currentJob = data.job;
+        setAdmin((value) => ({
+          ...value,
+          data: value.data
+            ? { ...value.data, openingLines: { ...(value.data.openingLines || {}), currentJob } }
+            : value.data
+        }));
+      }
+      const openingLines = await getJson("/api/admin/opening-lines");
+      setAdmin((value) => ({
+        ...value,
+        data: value.data ? { ...value.data, openingLines: { ...openingLines, currentJob } } : value.data
+      }));
+    } catch (error) {
+      setErrors((value) => ({ ...value, global: error.message }));
+      setAdmin((value) => ({
+        ...value,
+        data: value.data
+          ? {
+              ...value.data,
+              openingLines: {
+                ...(value.data.openingLines || {}),
+                currentJob: { ...(value.data.openingLines?.currentJob || {}), status: "failed", error: error.message }
+              }
+            }
+          : value.data
+      }));
+    }
+  }, [isAdmin]);
+
   const handlePrimaryAction = useCallback(async () => {
     if (currentScreen === "home") {
       if (!hasUser) return goTo("login");
@@ -652,6 +707,7 @@ export function useAppController() {
       setAdminUserEditorProfile,
       saveAdminUser,
       saveAdminSettings,
+      startOpeningLinesJob,
       shareFeedback,
       handlePrimaryAction,
       handleSecondaryAction
