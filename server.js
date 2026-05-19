@@ -1721,7 +1721,12 @@ function openingLineInputFor(session, persona, caseItem) {
     initialPromptFor(session, persona),
     "",
     "관리자 첫 시작 문장 생성 작업:",
-    "- 전체 대화 응답이 아니라 첫 시작 문장 1개만 출력한다.",
+    "- 전체 대화 응답이 아니라 사용자가 처음 보게 되는 첫 시작 문장 1개만 출력한다.",
+    "- 첫 문장은 영화의 첫 장면처럼 작동해야 한다. 사용자가 보지 못한 앞 대화나 이전 사건을 가리키지 않는다.",
+    "- 첫 문장 자체만 읽어도 현재 장면, 페르소나의 상태, 대화가 시작될 방향이 이해되어야 한다.",
+    "- '이런 얘기', '그 이야기', '저번에 하던 거', '아까', '방금', '계속 생각나던 것'처럼 보이지 않는 앞맥락을 지시하는 표현을 쓰지 않는다.",
+    "- concern_shared 설정이어도 '이미 말한 고민'을 가리키지 말고, 고민 내용을 첫 문장 안에 직접 드러낸다.",
+    "- faith_topic_arose 설정이어도 '그 주제'라고 하지 말고, 신앙/교회라는 단어를 직접 써서 장면을 연다.",
     "- 관계, 상황, 페르소나의 핵심 갈등이 한 문장 안에서 자연스럽게 느껴져야 한다.",
     "- 설명, 번호, 따옴표, 내부 분석, QA 메모는 출력하지 않는다.",
     "- 12~38자 정도의 자연스러운 한국어 구어체 한 문장으로만 출력한다.",
@@ -1743,10 +1748,18 @@ function openingLineBatchInputFor(persona, caseItems = []) {
     guardrailPrompt,
     "",
     "관리자 첫 시작 문장 배치 생성 작업:",
-    "- 아래 케이스마다 첫 시작 문장 1개를 만든다.",
+    "- 아래 케이스마다 사용자가 처음 보게 되는 첫 시작 문장 1개를 만든다.",
+    "- 첫 문장은 영화의 첫 장면처럼 작동해야 한다. 사용자는 이 문장 앞에 무슨 일이 있었는지 모른다.",
+    "- 각 문장 자체만 읽어도 현재 장면, 페르소나의 상태, 대화가 시작될 방향이 이해되어야 한다.",
+    "- 보이지 않는 앞맥락을 지시하지 않는다.",
+    "- 금지 표현: 이런 얘기, 저런 얘기, 그 이야기, 그 얘기, 저번에 하던 거, 아까, 방금, 계속 생각나던 것, 꺼내는 게, 꺼내놓고, 말한 것처럼.",
+    "- concern_shared 설정은 '이미 고민을 말한 뒤'처럼 쓰지 말고, 페르소나의 고민 내용을 첫 문장 안에 직접 드러낸다.",
+    "- faith_topic_arose 설정은 '그 주제'라고 쓰지 말고, 신앙/교회라는 단어를 직접 써서 장면을 연다.",
+    "- prior_faith_talk 관계여도 '저번 그 이야기'처럼 구체 내용 없는 과거 지시를 쓰지 않는다. 필요하면 '신앙 이야기는 아직 조심스럽다'처럼 현재 반응으로 시작한다.",
     "- 각 문장은 관계, 상황, 페르소나의 핵심 갈등이 자연스럽게 느껴져야 한다.",
+    "- 좋은 첫 문장의 구조는 '장면 단서 + 현재 감정/상태 + 대화 여지'다. 단, 매번 같은 구조로 반복하지 않는다.",
     "- 첫 문장부터 복음이나 교회 이야기로 바로 뛰어들지 않는다. 단, faith_topic_arose 설정은 신앙/교회 주제에 대한 조심스러운 반응을 포함할 수 있다.",
-    "- 각 문장은 12~42자 정도의 자연스러운 한국어 구어체로 쓴다.",
+    "- 각 문장은 14~36자 정도의 자연스러운 한국어 구어체로 쓴다.",
     "- 케이스끼리 같은 문장 구조와 말버릇을 반복하지 않는다.",
     "- 설명, 번호, 마크다운, 내부 분석은 출력하지 않는다.",
     "",
@@ -1778,6 +1791,50 @@ function parseOpeningLineBatch(text = "") {
       .filter((item) => item && typeof item.id === "string")
       .map((item) => [item.id, String(item.openingLine || item.text || "").trim()])
   );
+}
+
+function openingLineIssue(line = "") {
+  const text = String(line || "").trim();
+  if (!text) return "빈 문장";
+  if (text.length > 42) return "첫 시작 문장치고 너무 김";
+  if (/(이런|저런|그)\s*(얘기|이야기)|그\s*주제|저번|아까|방금|하던\s*거|꺼내|꺼내놓|말한\s*것처럼|뜬금없|계속\s*생각나/.test(text)) {
+    return "사용자가 보지 못한 앞맥락을 지시함";
+  }
+  return "";
+}
+
+function openingLineRepairInputFor(persona, caseItems = []) {
+  const cases = caseItems.map((item) => ({
+    id: item.id,
+    relationship: item.relationshipLabel,
+    setting: item.settingLabel,
+    previousLine: item.openingLine || "",
+    issue: item.error || openingLineIssue(item.openingLine),
+    goal: item.goalLabel
+  }));
+  return [
+    "첫 시작 문장 수정 작업:",
+    "- 아래 문장들은 첫 대화 시작 문장으로 부적절해서 수정해야 한다.",
+    "- 사용자는 이 문장 앞에 무슨 일이 있었는지 모른다.",
+    "- 수정 문장 자체만 읽어도 현재 장면, 페르소나의 상태, 대화가 시작될 방향이 이해되어야 한다.",
+    "- 보이지 않는 앞맥락 지시를 쓰지 않는다.",
+    "- 금지 표현: 이런 얘기, 저런 얘기, 그 이야기, 그 얘기, 그 주제, 저번, 아까, 방금, 하던 거, 꺼내는 게, 꺼내놓고, 말한 것처럼, 뜬금없다, 계속 생각나던 것.",
+    "- concern_shared 설정은 고민 내용을 문장 안에 직접 드러낸다.",
+    "- faith_topic_arose 설정은 신앙/교회라는 단어를 직접 써서 장면을 연다.",
+    "- 14~36자 정도의 자연스러운 한국어 구어체 한 문장으로 쓴다.",
+    "- 케이스끼리 문장 구조를 반복하지 않는다.",
+    "",
+    "페르소나:",
+    formatPersonaCard(persona),
+    "",
+    "수정 대상:",
+    JSON.stringify(cases, null, 2),
+    "",
+    "출력 형식:",
+    "[{\"id\":\"케이스 ID\",\"openingLine\":\"수정된 첫 시작 문장\"}]",
+    "",
+    "JSON 배열만 출력하라."
+  ].join("\n");
 }
 
 function publicOpeningLineCase(item = {}) {
@@ -1886,16 +1943,42 @@ async function runOpeningLineJob(jobId, actor) {
         const usageRecord = estimateUsage(input, text, usage);
         const cost = estimateCost({ provider, model, modelType: "chat", ...usageRecord });
         const generated = parseOpeningLineBatch(text);
+        const needsRepair = [];
+        for (const item of caseItems) {
+          const openingLine = firstOpeningSentence(generated.get(item.id) || "");
+          const issue = openingLine ? openingLineIssue(openingLine) : "배치 응답에서 해당 케이스 문장을 찾지 못했습니다.";
+          if (issue) needsRepair.push({ ...item, openingLine, error: issue });
+          else generated.set(item.id, openingLine);
+        }
+        if (needsRepair.length) {
+          const repairInput = openingLineRepairInputFor(persona, needsRepair);
+          const repair = await callModelWithUsage({
+            modelType: "chat",
+            instructions: personaPrompt,
+            input: repairInput,
+            overrides: {
+              maxOutputTokens: Math.max(1200, Math.min(3000, Number(settings.maxOutputTokens || 3000))),
+              thinkingType: "disabled",
+              thinkingBudgetTokens: 0
+            }
+          });
+          const repaired = parseOpeningLineBatch(repair.text);
+          for (const item of needsRepair) {
+            const repairedLine = firstOpeningSentence(repaired.get(item.id) || "");
+            if (repairedLine && !openingLineIssue(repairedLine)) generated.set(item.id, repairedLine);
+          }
+        }
         const perCaseInputTokens = Math.round(usageRecord.inputTokens / Math.max(1, caseItems.length));
         const perCaseOutputTokens = Math.round(usageRecord.outputTokens / Math.max(1, caseItems.length));
         const perCaseCostKrw = Number((cost.estimatedCostKrw / Math.max(1, caseItems.length)).toFixed(2));
         for (const item of caseItems) {
           const openingLine = generated.get(item.id);
-          if (!openingLine) {
-            item.error = "배치 응답에서 해당 케이스 문장을 찾지 못했습니다.";
+          const issue = openingLineIssue(openingLine);
+          if (!openingLine || issue) {
+            item.error = issue || "배치 응답에서 해당 케이스 문장을 찾지 못했습니다.";
             job.failed += 1;
           } else {
-            item.openingLine = firstOpeningSentence(openingLine);
+            item.openingLine = openingLine;
             item.fullText = openingLine;
           }
           item.provider = provider;
