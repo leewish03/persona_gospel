@@ -490,14 +490,64 @@ const goalLabels = {
   share_personal_witness: "내 말투로 짧게 간증/증거하기"
 };
 
-const goalGuidance = {
-  listen_and_understand: "이 훈련 초점은 사용자가 연습할 목표다. 페르소나는 해결책이나 설교보다 경청과 공감을 받는 상대역이다. 사용자가 잘 들으면 페르소나는 자기 감정을 조금 더 구체적으로 드러내고, 성급하게 결론 내리면 방어적으로 반응한다.",
-  ask_better_questions: "이 훈련 초점은 사용자가 연습할 목표다. 페르소나는 좋은 질문을 받으면 자기 생각과 복음 장벽을 더 분명히 말한다. 페르소나가 사용자를 질문 훈련시키거나 평가하지 않는다.",
-  connect_to_faith: "이 훈련 초점은 사용자가 연습할 목표다. 페르소나는 삶의 고민에서 신앙 주제로 이어지는 말을 듣는 상대역이다. 억지 전환에는 부담을 느끼고, 자기 이야기와 연결된 전환에는 조심스럽게 따라온다.",
-  explain_gospel_core: "이 훈련 초점은 사용자가 연습할 목표다. 페르소나는 죄, 은혜, 예수 그리스도, 믿음의 핵심 설명을 듣는 상대역이다. 추상적 용어나 긴 설교에는 피로감을 느끼고, 자기 상황에 닿는 설명에는 질문이나 장벽으로 반응한다.",
-  respond_to_barrier: "이 훈련 초점은 사용자가 연습할 목표다. 페르소나는 오해나 저항을 가진 상대역이다. 압박받으면 물러서고, 존중받으면 실제 장벽을 더 솔직히 말한다. 페르소나가 사용자의 장벽을 해결하려고 하지 않는다.",
-  share_personal_witness: "이 훈련 초점은 사용자가 연습할 목표다. 페르소나는 사용자의 짧고 진솔한 간증/증거를 듣는 상대역이다. 과장되거나 정답처럼 말하는 간증보다, 구체적이고 겸손한 증거에 더 열려 있다."
+const goalPolicies = {
+  listen_and_understand: {
+    opportunity: "감정과 고민을 한 번에 다 털어놓지 말고, 사용자가 경청과 공감으로 반응할 수 있는 여지를 남긴다.",
+    goodResponse: "사용자가 잘 들으면 방금 말한 감정의 이유나 실제 장면을 조금 더 구체적으로 드러낸다.",
+    resistance: "해결책이나 설교가 빠르면 좋은 말인 건 알지만 지금은 조금 빠르게 느껴진다고 방어한다.",
+    avoid: "페르소나가 먼저 신앙 질문을 던져 사용자의 경청 연습을 건너뛰게 만들지 않는다.",
+    opening: "첫 장면은 가벼워도 되지만 visibleScene이나 첫 응답에 말하고 싶은 고민의 압력이 보여야 한다."
+  },
+  ask_better_questions: {
+    opportunity: "단답으로 끝나지 않는 장벽 단서를 남겨 사용자가 더 좋은 질문을 할 수 있게 한다.",
+    goodResponse: "좋은 질문을 받으면 추상적 장벽을 더 구체적인 삶의 언어로 바꿔 말한다.",
+    resistance: "캐묻거나 심문처럼 느껴지면 답이 짧아지고 방어적으로 변한다.",
+    avoid: "페르소나가 질문을 평가하거나 정답 질문을 가르치지 않는다.",
+    opening: "첫 장면에는 사용자가 캐물을 수 있는 작은 모순, 망설임, 궁금증 중 하나를 둔다."
+  },
+  connect_to_faith: {
+    opportunity: "삶의 고민과 가치관을 드러내 사용자가 신앙 이야기로 자연스럽게 연결할 다리를 제공한다.",
+    goodResponse: "자기 이야기와 연결된 전환에는 그게 내 상황과 이어진다면 더 듣고 싶다는 식으로 조심스럽게 따라온다.",
+    resistance: "억지 전환이면 갑자기 교회 이야기로 가는 느낌이 든다고 부담을 표현한다.",
+    avoid: "페르소나가 먼저 전도 흐름을 대신 열어 사용자의 연결 연습을 빼앗지 않는다.",
+    opening: "첫 장면은 일상 고민이 보이게 만들고, 신앙 연결은 사용자가 시도할 수 있게 남겨둔다."
+  },
+  explain_gospel_core: {
+    opportunity: "복음 핵심 설명을 들을 수 있는 질문, 오해, 빈틈을 제공한다.",
+    goodResponse: "죄, 은혜, 십자가, 부활, 믿음 중 하나가 자기 상황에 어떻게 닿는지 장벽을 구체화한다.",
+    resistance: "긴 설교나 추상어가 많으면 말은 알겠는데 내 얘기처럼 안 들린다고 반응한다.",
+    avoid: "페르소나가 복음 내용을 대신 요약하거나 바로 동의하지 않는다.",
+    opening: "첫 장면은 복음 설명으로 바로 들어가기보다 설명이 필요해질 만한 오해나 질문의 씨앗을 둔다."
+  },
+  respond_to_barrier: {
+    opportunity: "명확한 오해나 저항을 말해 사용자가 차분히 답할 수 있게 한다.",
+    goodResponse: "존중받으면 장벽을 포기하지는 않지만 더 정확한 질문으로 이동한다.",
+    resistance: "반박당한다고 느끼면 물러서거나 방어한다.",
+    avoid: "페르소나가 스스로 장벽을 해결하거나 너무 빨리 수긍하지 않는다.",
+    opening: "첫 장면부터 강한 반박을 던지기보다, 이 사람이 가진 오해나 거리감이 보이게 한다."
+  },
+  share_personal_witness: {
+    opportunity: "사용자가 짧고 진솔한 간증을 나눌 수 있는 여백을 만든다.",
+    goodResponse: "과장 없는 구체성에는 마음을 조금 열고, 자기 상황과 닿는 부분을 짚는다.",
+    resistance: "정답처럼 말하거나 자기 자랑처럼 들리면 거리를 둔다.",
+    avoid: "페르소나가 간증을 요구하거나 사용자의 경험을 캐묻는 상담자가 되지 않는다.",
+    opening: "첫 장면은 사용자의 경험담이 자연스럽게 들어올 수 있는 감정적 여백을 둔다."
+  }
 };
+
+function formatGoalPolicy(policy) {
+  if (!policy) return "사용자의 선택 목표를 이번 대화의 훈련 초점으로 반영한다.";
+  return [
+    `연습 기회: ${policy.opportunity}`,
+    `잘 맞게 접근하면: ${policy.goodResponse}`,
+    `서두르거나 빗나가면: ${policy.resistance}`,
+    `과유도 금지: ${policy.avoid}`
+  ].join(" ");
+}
+
+const goalGuidance = Object.fromEntries(
+  Object.entries(goalPolicies).map(([goal, policy]) => [goal, `이 훈련 초점은 사용자가 연습할 목표다. ${formatGoalPolicy(policy)}`])
+);
 
 const guardrailPrompt = [
   "역할 고정:",
@@ -1431,6 +1481,72 @@ function formatPasExecutionPlan(persona, messages = []) {
   ].join("\n");
 }
 
+function goalPressureFor(session = {}, messages = [], persona = {}) {
+  const goal = session.goal || "listen_and_understand";
+  const policy = goalPolicies[goal];
+  const detected = detectUserMove(lastUserMessage(messages) || {});
+  const userTurns = messages.filter((message) => message.role === "user").length;
+  const barrier =
+    persona.roleplayTemplate?.lateSessionTension?.coreQuestion ||
+    persona.gospelBarriers?.[0] ||
+    "페르소나의 핵심 복음 장벽";
+  const openingMode = !messages.length;
+
+  const gospelMoves = ["god_love", "sin_repentance", "cross_resurrection", "faith_salvation"];
+  const isGospelMove = gospelMoves.includes(detected.userMove);
+  const isGoodListening = ["empathy", "listening"].includes(detected.userMove);
+  const isQuestion = detected.userMove === "question";
+  const isPressure = detected.userMove === "pressure";
+  const isWitness = detected.userMove === "personal_witness";
+
+  let turnInstruction = "선택된 훈련 초점에 맞는 연습 기회를 자연스럽게 제공한다.";
+  if (openingMode) {
+    turnInstruction = policy?.opening || "첫 장면은 사용자가 선택한 훈련 초점을 연습할 작은 여지를 남긴다.";
+  } else if (goal === "listen_and_understand") {
+    if (isGoodListening) turnInstruction = "경청받은 만큼 감정이나 고민을 한 단계만 더 구체화한다.";
+    else if (isGospelMove || isPressure) turnInstruction = "좋은 말인 건 알지만 아직 충분히 들어준 느낌은 아니라고 조심스럽게 방어한다.";
+    else turnInstruction = "해결을 요구하기보다 사용자가 더 들을 수 있는 감정 단서를 남긴다.";
+  } else if (goal === "ask_better_questions") {
+    if (isQuestion) turnInstruction = "질문이 좋게 닿으면 단답 대신 장벽을 더 구체적인 말로 풀어준다.";
+    else if (isPressure) turnInstruction = "압박이나 단정처럼 느껴지면 짧아지고 조심스러워진다.";
+    else turnInstruction = "사용자가 더 좋은 질문을 할 수 있도록 모호하지만 실제적인 단서를 하나 남긴다.";
+  } else if (goal === "connect_to_faith") {
+    if (isGospelMove) turnInstruction = "신앙 연결이 자기 고민과 닿는 부분은 따라가되, 억지 전환이면 부담을 표현한다.";
+    else if (isGoodListening || isQuestion) turnInstruction = "삶의 고민이나 가치관을 조금 더 드러내 신앙 연결의 다리를 제공한다.";
+    else turnInstruction = "일상 고민과 신앙 사이의 빈틈이 보이도록 현재 압박을 말한다.";
+  } else if (goal === "explain_gospel_core") {
+    if (isGospelMove) turnInstruction = "복음 설명을 바로 받아들이지 말고 죄, 은혜, 십자가, 믿음 중 자기에게 걸리는 지점 하나를 말한다.";
+    else if (isPressure) turnInstruction = "설교처럼 느껴지는 부담을 표현하고, 추상어보다 자기 상황에 닿는 설명을 필요로 한다.";
+    else turnInstruction = "복음 핵심 설명이 필요해질 만한 오해나 질문의 빈틈을 자연스럽게 남긴다.";
+  } else if (goal === "respond_to_barrier") {
+    if (isGospelMove || isQuestion) turnInstruction = "명확한 오해나 저항을 말하되, 존중받으면 더 정확한 질문으로 이동한다.";
+    else if (isPressure) turnInstruction = "반박당한다고 느껴 방어하지만 관계를 끊지는 않는다.";
+    else turnInstruction = `아직 남은 장벽을 흐리지 말고 '${barrier}'에 가까운 저항을 자연스럽게 드러낸다.`;
+  } else if (goal === "share_personal_witness") {
+    if (isWitness) turnInstruction = "사용자의 구체적이고 겸손한 경험에는 조금 열리되, 과장처럼 들리면 거리를 둔다.";
+    else if (isGoodListening) turnInstruction = "사용자가 자기 경험을 나눌 수 있는 여백을 만들고, 페르소나의 비슷한 감정 단서를 남긴다.";
+    else turnInstruction = "간증을 요구하지 말고, 사용자의 짧은 경험담이 들어올 수 있는 감정적 틈을 둔다.";
+  }
+
+  const stageHint =
+    userTurns <= 3
+      ? "초반이므로 훈련 초점을 노골적으로 밀지 말고 자연스러운 여지만 만든다."
+      : userTurns <= 8
+        ? "중반이므로 사용자의 접근에 따라 조금 더 열리거나 장벽을 더 구체화한다."
+        : "후반이므로 결론을 닫기보다 남은 질문이나 유보를 선명하게 남긴다.";
+
+  return [
+    "훈련 초점 실행 압력:",
+    `- 선택 초점: ${goalLabels[goal] || goal}`,
+    `- 페르소나가 제공할 연습 기회: ${policy?.opportunity || "사용자가 선택한 목표를 연습할 수 있는 자연스러운 상대 반응"}`,
+    `- 잘 맞게 접근하면: ${policy?.goodResponse || "조금 더 열리되 바로 결론 내리지 않는다."}`,
+    `- 서두르거나 빗나가면: ${policy?.resistance || "부담, 혼란, 거리감을 자연스럽게 표현한다."}`,
+    `- 이번 턴 적용: ${turnInstruction}`,
+    `- 단계 조절: ${stageHint}`,
+    `- 과유도 금지: ${policy?.avoid || "사용자를 평가하거나 코칭하지 않는다."}`
+  ].join("\n");
+}
+
 function conversationPhase(messages = []) {
   const userTurns = messages.filter((message) => message.role === "user").length;
   const conversationText = messages.map((message) => message.content || "").join("\n");
@@ -1584,10 +1700,14 @@ function initialPromptFor(session, persona) {
     "",
     formatRuntimeCard(persona),
     "",
+    goalPressureFor(session, [], persona),
+    "",
     "첫 응답 실행 지침:",
     "- 관계 반영 지침과 상황 반영 지침을 반드시 반영한다.",
+    "- 훈련 초점은 대화 속에서 은근히 작동해야 하며, 훈련이나 목표를 직접 언급하지 않는다.",
     "- runtimeCard의 smalltalk 또는 opening 성격에 맞는 PAS를 내부적으로 참고한다.",
     "- 장소/시간/매체 단서가 최소 하나는 자연스럽게 드러나야 한다.",
+    "- 첫 반응이 가벼운 인사나 상황 반응이라면, 말투나 장면 압력 안에 페르소나의 망설임, 부담, 관심사 중 하나가 희미하게라도 보여야 한다.",
     "- 첫 문장부터 복음이나 교회 이야기로 바로 뛰어들지 않는다. 단, 사용자가 먼저 신앙 이야기를 꺼낸 설정이라면 그 말에 조심스럽게 반응한다.",
     "- 사용자가 아직 말하지 않았으므로, 상황에 맞는 짧은 첫 반응만 한다.",
     "- 최종 응답은 자연스러운 한국어 구어체로만 작성한다.",
@@ -1605,6 +1725,8 @@ function chatPromptFor(session, persona, messages) {
     conversationPhase(messages),
     "",
     conversationStateHints(messages, persona),
+    "",
+    goalPressureFor(session, messages, persona),
     `- 장면 유지 지침: ${settingContinuityHint(session, messages)}`,
     `- 질문 다양성 지침: ${questionVarietyHint(messages)}`,
     "",
@@ -1619,6 +1741,7 @@ function chatPromptFor(session, persona, messages) {
     "- 최근 3턴에서 사용한 말투, 질문 구조, 망설임 표현을 그대로 반복하지 않는다.",
     "- 같은 질문어를 반복하지 않는다. 특히 '어떻게'가 반복되면 이번 응답은 질문 대신 페르소나의 유보, 부담, 아직 남은 장벽을 진술한다.",
     "- 질문이 필요하면 페르소나 자신의 남은 장벽을 더 구체화하는 질문 하나만 한다.",
+    "- 선택된 훈련 초점에 맞는 연습 기회를 제공하되, 사용자를 평가하거나 훈련시키는 말투를 쓰지 않는다.",
     "- 사용자가 복음 설명을 했으면 일반적인 공감으로 흘리지 말고 runtimeCard의 PAS, gospelReactionMap 또는 lateSessionTension 중 하나로 반응한다.",
     "- PAS 후보의 예시는 그대로 복사하지 말고 의미와 구조만 참고한다.",
     "",
@@ -1749,11 +1872,12 @@ function openingLineInputFor(session, persona, caseItem) {
     "관리자 첫 시작 문장 생성 작업:",
     "- 전체 대화 응답이 아니라 사용자가 처음 보게 되는 첫 시작 문장 1개만 출력한다.",
     "- 첫 문장은 영화의 첫 장면처럼 작동해야 한다. 사용자가 보지 못한 앞 대화나 이전 사건을 가리키지 않는다.",
-    "- 첫 문장 자체만 읽어도 현재 장면, 페르소나의 상태, 대화가 시작될 방향이 이해되어야 한다.",
+    "- 첫 문장이 가벼운 인사나 상황 반응이어도 된다. 단, visibleScene과 합쳐 보면 페르소나의 상태와 대화가 시작될 방향이 이해되어야 한다.",
+    "- visibleScene + 첫 문장 조합이 훈련 초점에 맞는 연습 기회를 만들어야 한다.",
     "- '이런 얘기', '그 이야기', '저번에 하던 거', '아까', '방금', '계속 생각나던 것'처럼 보이지 않는 앞맥락을 지시하는 표현을 쓰지 않는다.",
     "- concern_shared 설정이어도 '이미 말한 고민'을 가리키지 말고, 고민 내용을 첫 문장 안에 직접 드러낸다.",
     "- faith_topic_arose 설정이어도 '그 주제'라고 하지 말고, 신앙/교회라는 단어를 직접 써서 장면을 연다.",
-    "- 관계, 상황, 페르소나의 핵심 갈등이 한 문장 안에서 자연스럽게 느껴져야 한다.",
+    "- 관계, 상황, 페르소나의 핵심 갈등이 visibleScene 또는 첫 문장 중 최소 하나에서 자연스럽게 느껴져야 한다.",
     "- 설명, 번호, 따옴표, 내부 분석, QA 메모는 출력하지 않는다.",
     "- 12~38자 정도의 자연스러운 한국어 구어체 한 문장으로만 출력한다.",
     "",
@@ -1769,7 +1893,8 @@ function openingLineBatchInputFor(persona, caseItems = []) {
     relationshipGuidance: relationshipGuidance[item.relationship] || "",
     setting: item.settingLabel,
     settingGuidance: settingGuidance[item.setting] || "",
-    goal: item.goalLabel
+    goal: item.goalLabel,
+    goalGuidance: goalGuidance[item.goal] || ""
   }));
   return [
     guardrailPrompt,
@@ -1781,12 +1906,15 @@ function openingLineBatchInputFor(persona, caseItems = []) {
     "- 각 케이스에는 visibleScene도 함께 만든다. visibleScene은 채팅 상단에 표시될 상황 설명이다.",
     "- visibleScene은 35~85자 정도의 3인칭 현재 상황 설명으로 쓴다.",
     "- visibleScene은 사용자가 보지 못한 앞 대화를 가리키지 않고, 지금 화면에 열린 첫 장면만 설명한다.",
+    "- openingLine은 실제 사람이 처음 꺼낼 수 있는 자연스러운 말이어야 한다. 가벼운 인사나 상황 반응도 허용된다.",
+    "- 단, openingLine이 가볍거나 일반적이면 visibleScene에는 페르소나의 망설임, 감춘 압박, 관계 거리감, 신앙/교회에 대한 조심스러움, 오늘 대화가 시작될 이유 중 하나가 반드시 드러나야 한다.",
+    "- visibleScene과 openingLine을 합쳐 봤을 때 사용자가 선택한 훈련 초점을 연습할 수 있어야 한다.",
     "- 보이지 않는 앞맥락을 지시하지 않는다.",
     "- 금지 표현: 이런 얘기, 저런 얘기, 그 이야기, 그 얘기, 저번에 하던 거, 아까, 방금, 계속 생각나던 것, 꺼내는 게, 꺼내놓고, 말한 것처럼.",
     "- concern_shared 설정은 '이미 고민을 말한 뒤'처럼 쓰지 말고, 페르소나의 고민 내용을 첫 문장 안에 직접 드러낸다.",
     "- faith_topic_arose 설정은 '그 주제'라고 쓰지 말고, 신앙/교회라는 단어를 직접 써서 장면을 연다.",
     "- prior_faith_talk 관계여도 '저번 그 이야기'처럼 구체 내용 없는 과거 지시를 쓰지 않는다. 필요하면 '신앙 이야기는 아직 조심스럽다'처럼 현재 반응으로 시작한다.",
-    "- 각 문장은 관계, 상황, 페르소나의 핵심 갈등이 자연스럽게 느껴져야 한다.",
+    "- 관계, 상황, 페르소나의 핵심 갈등은 openingLine 하나에 전부 담지 않아도 되지만 visibleScene + openingLine 조합에서는 분명해야 한다.",
     "- 좋은 첫 문장의 구조는 '장면 단서 + 현재 감정/상태 + 대화 여지'다. 단, 매번 같은 구조로 반복하지 않는다.",
     "- 첫 문장부터 복음이나 교회 이야기로 바로 뛰어들지 않는다. 단, faith_topic_arose 설정은 신앙/교회 주제에 대한 조심스러운 반응을 포함할 수 있다.",
     "- 각 문장은 14~36자 정도의 자연스러운 한국어 구어체로 쓴다.",
@@ -1855,6 +1983,8 @@ function openingLineRepairInputFor(persona, caseItems = []) {
     "- 사용자는 이 문장 앞에 무슨 일이 있었는지 모른다.",
     "- 수정 문장 자체만 읽어도 현재 장면, 페르소나의 상태, 대화가 시작될 방향이 이해되어야 한다.",
     "- visibleScene도 필요하면 함께 수정한다. visibleScene은 채팅 상단에 표시될 3인칭 현재 상황 설명이다.",
+    "- openingLine이 자연스러운 가벼운 첫마디라면 visibleScene이 페르소나의 압력과 훈련 초점을 보완해야 한다.",
+    "- visibleScene + openingLine 조합이 사용자가 선택한 훈련 초점을 연습할 수 있는 시작점이어야 한다.",
     "- 보이지 않는 앞맥락 지시를 쓰지 않는다.",
     "- 금지 표현: 이런 얘기, 저런 얘기, 그 이야기, 그 얘기, 그 주제, 저번, 아까, 방금, 하던 거, 꺼내는 게, 꺼내놓고, 말한 것처럼, 뜬금없다, 계속 생각나던 것.",
     "- concern_shared 설정은 고민 내용을 문장 안에 직접 드러낸다.",
