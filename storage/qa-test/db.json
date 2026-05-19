@@ -1,0 +1,90 @@
+{
+  "users": [
+    {
+      "id": "qa-user",
+      "provider": "dev",
+      "providerId": "dev@example.local",
+      "email": "dev@example.local",
+      "displayName": "QA User",
+      "avatarUrl": "",
+      "role": "admin",
+      "profile": {
+        "name": "Lee Sowon",
+        "age": "24",
+        "gender": "여성",
+        "church": "서울북부교회",
+        "useCase": "CBF 활동"
+      },
+      "createdAt": "2026-05-15T17:06:45.3115618Z",
+      "updatedAt": "2026-05-15T17:07:03.405Z",
+      "lastLoginAt": "2026-05-15T17:07:03.405Z"
+    }
+  ],
+  "conversations": [
+    {
+      "id": "active-qa",
+      "userId": "qa-user",
+      "session": {
+        "personaId": "choi-minjae",
+        "relationship": "acquaintance",
+        "setting": "cafe_catchup",
+        "goal": "listen_and_understand"
+      },
+      "messages": [
+        {
+          "role": "assistant",
+          "content": "요즘 취업 준비 때문에 마음이 복잡하다고 했죠. 어떤 부분이 제일 부담돼요?"
+        },
+        {
+          "role": "user",
+          "content": "면접이 계속 안 풀려서 자신감이 떨어져요."
+        }
+      ],
+      "feedbackText": "",
+      "feedbackSummary": "",
+      "status": "active",
+      "createdAt": "2026-05-15T17:06:45.3115618Z",
+      "updatedAt": "2026-05-15T17:06:45.3115618Z",
+      "finishedAt": ""
+    },
+    {
+      "id": "finished-qa",
+      "userId": "qa-user",
+      "session": {
+        "personaId": "han-seojun",
+        "relationship": "old_friend",
+        "setting": "walk_after_work",
+        "goal": "respond_to_barrier"
+      },
+      "messages": [
+        {
+          "role": "assistant",
+          "content": "나는 착하게 살면 충분하다고 생각해."
+        },
+        {
+          "role": "user",
+          "content": "그 마음이 왜 중요한지 먼저 듣고 싶어."
+        }
+      ],
+      "feedbackText": "## 기존 피드백\n이미 생성된 피드백입니다.",
+      "feedbackSummary": "이미 생성된 피드백입니다.",
+      "status": "finished",
+      "createdAt": "2026-05-15T17:06:45.3115618Z",
+      "updatedAt": "2026-05-15T17:06:45.3115618Z",
+      "finishedAt": "2026-05-15T17:06:45.3115618Z"
+    }
+  ],
+  "usageEvents": [],
+  "settings": {
+    "donation": {
+      "title": "후원",
+      "body": "테스트",
+      "account": "",
+      "enabled": true
+    },
+    "cost": {
+      "usdToKrw": 1380,
+      "monthlyBudgetKrw": 0
+    }
+  }
+}

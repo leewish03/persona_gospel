@@ -66,7 +66,9 @@ OAuth: Google/Kakao
 ```text
 OPENAI_API_KEY=sk-...
 OPENAI_CHAT_MODEL=gpt-5.4-mini
+OPENAI_CHAT_REASONING_EFFORT=high
 OPENAI_FEEDBACK_MODEL=gpt-5.4
+OPENAI_FEEDBACK_REASONING_EFFORT=medium
 APP_BASE_URL=https://서비스도메인
 ADMIN_EMAILS=owner@example.com
 

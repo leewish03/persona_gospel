@@ -5,12 +5,14 @@ const state = {
   personas: [],
   selectedPersonaId: null,
   currentScreen: "home",
+  screenStack: [],
   auth: { user: null, devLoginEnabled: false, googleEnabled: false, kakaoEnabled: false },
   activeSession: null,
   conversationId: "",
   messages: [],
   latestFeedbackText: "",
   sessionStarted: false,
+  waitingForAssistant: false,
   isBusy: false,
   historyLoaded: false,
   historyItems: [],
@@ -173,7 +175,7 @@ async function postJson(path, payload = {}) {
   return data;
 }
 
-function goTo(screen) {
+function goTo(screen, options = {}) {
   if (screen === "persona" || screen === "context" || screen === "review" || screen === "chat") {
     if (!ensureReadyForTraining()) return;
   }
@@ -183,6 +185,10 @@ function goTo(screen) {
       els.reviewScreen.scrollTop = 0;
       updateReviewGate();
     });
+  }
+  if (!options.fromHistory && !options.replace && state.currentScreen && state.currentScreen !== screen) {
+    state.screenStack.push(state.currentScreen);
+    if (state.screenStack.length > 30) state.screenStack.shift();
   }
   state.currentScreen = screen;
   if (screen !== "context") els.contextError.textContent = "";
@@ -225,14 +231,15 @@ function ensureReadyForTraining() {
 function previousScreen() {
   if (state.currentScreen === "chat" && state.sessionStarted) return;
   if (state.currentScreen === "home") return;
-  if (state.currentScreen === "historyDetail") {
-    goTo("history");
-    return;
+
+  while (state.screenStack.length) {
+    const previous = state.screenStack.pop();
+    if (previous && previous !== state.currentScreen) {
+      goTo(previous, { fromHistory: true });
+      return;
+    }
   }
-  if (state.currentScreen === "history" || state.currentScreen === "settings" || state.currentScreen === "admin") {
-    goTo("home");
-    return;
-  }
+
   const index = flowScreens.indexOf(state.currentScreen);
   if (index > 0) goTo(flowScreens[index - 1]);
   else goTo("home");
@@ -404,6 +411,23 @@ function renderMessages() {
     body.textContent = message.content;
     els.messageList.append(node);
   }
+  if (state.waitingForAssistant && persona) {
+    const node = els.messageTemplate.content.firstElementChild.cloneNode(true);
+    node.classList.add("assistant", "typing");
+    const avatar = node.querySelector(".message-avatar");
+    const role = node.querySelector(".message-role");
+    const body = node.querySelector(".message-body");
+    avatar.src = personaImages[persona.id];
+    avatar.alt = `${persona.name} 프로필 이미지`;
+    avatar.removeAttribute("aria-hidden");
+    role.textContent = persona.name;
+    body.innerHTML = `
+      <span class="typing-dots" aria-label="응답 작성 중">
+        <span></span><span></span><span></span>
+      </span>
+    `;
+    els.messageList.append(node);
+  }
   scrollMessagesToBottom();
 }
 
@@ -470,13 +494,42 @@ function restoreSession(session = {}) {
   els.setting.value = session.setting || "";
   els.goal.value = session.goal || "";
   state.activeSession = null;
+  state.conversationId = "";
   state.messages = [];
   state.latestFeedbackText = "";
   state.sessionStarted = false;
+  state.waitingForAssistant = false;
   state.reviewScrolled = false;
   renderContextImage();
   renderReviewSummary();
   goTo("review");
+}
+
+function resumeConversation(conversation = {}) {
+  const session = conversation.session || {};
+  state.selectedPersonaId = session.personaId || state.selectedPersonaId;
+  els.relationship.value = session.relationship || "";
+  els.setting.value = session.setting || "";
+  els.goal.value = session.goal || "";
+  state.activeSession = {
+    personaId: state.selectedPersonaId,
+    relationship: els.relationship.value,
+    setting: els.setting.value,
+    goal: els.goal.value
+  };
+  state.conversationId = conversation.id || "";
+  state.messages = conversation.messages || [];
+  state.latestFeedbackText = conversation.feedbackText || "";
+  state.sessionStarted = conversation.status !== "finished";
+  state.waitingForAssistant = false;
+  state.reviewScrolled = false;
+  els.feedbackPanel.innerHTML = "";
+  renderContextImage();
+  renderReviewSummary();
+  renderChatMeta();
+  renderMessages();
+  goTo("chat");
+  requestAnimationFrame(() => els.messageInput.focus());
 }
 
 function render() {
@@ -588,6 +641,7 @@ async function startSession() {
     goal: els.goal.value
   };
   state.sessionStarted = true;
+  state.waitingForAssistant = true;
   state.messages = [];
   state.conversationId = "";
   els.feedbackPanel.innerHTML = "";
@@ -597,6 +651,7 @@ async function startSession() {
   try {
     const data = await postJson("/api/start", { session: currentSession() });
     state.conversationId = data.conversationId || "";
+    state.waitingForAssistant = false;
     state.messages.push({ role: "assistant", content: data.text });
     state.historyLoaded = false;
     render();
@@ -604,6 +659,7 @@ async function startSession() {
   } catch (error) {
     state.sessionStarted = false;
     state.activeSession = null;
+    state.waitingForAssistant = false;
     state.messages = [];
     goTo("context");
     els.contextError.textContent = error.message;
@@ -622,6 +678,7 @@ async function submitMessage() {
   if (!content || state.isBusy || !state.sessionStarted) return;
 
   state.messages.push({ role: "user", content });
+  state.waitingForAssistant = true;
   els.messageInput.value = "";
   renderMessages();
   setBusy(true, "chat");
@@ -632,10 +689,12 @@ async function submitMessage() {
       session: currentSession(),
       messages: state.messages.filter((message) => message.role !== "system")
     });
+    state.waitingForAssistant = false;
     state.messages.push({ role: "assistant", content: data.text });
     state.historyLoaded = false;
     render();
   } catch (error) {
+    state.waitingForAssistant = false;
     addSystemMessage(error.message);
   } finally {
     setBusy(false);
@@ -708,7 +767,13 @@ function escapeHtml(value = "") {
 }
 
 async function finishSession() {
+  if (state.latestFeedbackText) {
+    state.sessionStarted = false;
+    goTo("feedback");
+    return;
+  }
   state.latestFeedbackText = "";
+  state.waitingForAssistant = false;
   setBusy(true, "primary");
   goTo("feedback");
   els.feedbackPanel.innerHTML = `
@@ -765,16 +830,21 @@ async function loadHistory() {
       data.conversations
         .map((item) => {
           const labels = sessionLabels(item.session);
+          const isActive = item.status !== "finished";
           return `
             <article class="history-item">
-              <strong>${labels.persona} · ${item.status === "finished" ? "완료" : "진행 중"}</strong>
+              <strong>${labels.persona} · ${isActive ? "진행 중" : "완료"}</strong>
               <span>${formatDate(item.createdAt)}</span>
               <p>${labels.relationship} · ${labels.setting}</p>
               <p><b>훈련 초점</b> ${labels.goal}</p>
               ${item.feedbackSummary ? `<p class="history-summary">${item.feedbackSummary}</p>` : ""}
               <div class="history-actions">
                 <button class="secondary-button" type="button" data-history-detail="${item.id}">상세</button>
-                <button class="secondary-button" type="button" data-history-repeat="${item.id}">같은 설정으로 다시</button>
+                ${
+                  isActive
+                    ? `<button class="secondary-button" type="button" data-history-continue="${item.id}">대화 이어가기</button>`
+                    : `<button class="secondary-button" type="button" data-history-repeat="${item.id}">같은 설정으로 다시</button>`
+                }
               </div>
             </article>
           `;
@@ -843,6 +913,29 @@ function bindHistoryEvents() {
       if (item) restoreSession(item.session);
     });
   }
+  for (const button of els.historyList.querySelectorAll("[data-history-continue]")) {
+    button.addEventListener("click", () => {
+      void continueHistoryConversation(button.dataset.historyContinue);
+    });
+  }
+}
+
+async function continueHistoryConversation(id) {
+  if (!id) return;
+  setBusy(true);
+  try {
+    const data = await getJson(`/api/conversations/${encodeURIComponent(id)}`);
+    const item = data.conversation;
+    if (!item || item.status === "finished") {
+      addSystemMessage("이미 완료된 기록입니다. 같은 설정으로 다시 시작해주세요.");
+      return;
+    }
+    resumeConversation(item);
+  } catch (error) {
+    els.historyList.innerHTML = `<p class="form-error">${error.message}</p>`;
+  } finally {
+    setBusy(false);
+  }
 }
 
 async function loadHistoryDetail(id) {
@@ -855,6 +948,7 @@ async function loadHistoryDetail(id) {
     const data = await getJson(`/api/conversations/${encodeURIComponent(id)}`);
     const item = data.conversation;
     const labels = sessionLabels(item.session);
+    const isActive = item.status !== "finished";
     els.historyDetailPanel.innerHTML = `
       <article class="history-detail-card">
         <h3>${labels.persona}</h3>
@@ -863,9 +957,11 @@ async function loadHistoryDetail(id) {
           <dt>관계</dt><dd>${labels.relationship}</dd>
           <dt>상황</dt><dd>${labels.setting}</dd>
           <dt>훈련 초점</dt><dd>${labels.goal}</dd>
-          <dt>상태</dt><dd>${item.status === "finished" ? "완료" : "진행 중"}</dd>
+          <dt>상태</dt><dd>${isActive ? "진행 중" : "완료"}</dd>
         </dl>
-        <button class="secondary-button full-width" type="button" id="repeatHistoryButton">같은 설정으로 다시 훈련</button>
+        <button class="secondary-button full-width" type="button" id="historyActionButton">
+          ${isActive ? "대화 이어가기" : "같은 설정으로 다시 훈련"}
+        </button>
       </article>
       <article class="history-detail-card">
         <h3>대화 전문</h3>
@@ -880,10 +976,17 @@ async function loadHistoryDetail(id) {
       </article>
       <article class="history-detail-card">
         <h3>피드백 리포트</h3>
-        ${item.feedbackText ? markdownToHtml(item.feedbackText) : "<p>아직 피드백이 없습니다.</p>"}
+        ${
+          item.feedbackText
+            ? markdownToHtml(item.feedbackText)
+            : `<p>${isActive ? "대화를 이어가거나 종료하면 피드백을 받을 수 있습니다." : "아직 피드백이 없습니다."}</p>`
+        }
       </article>
     `;
-    document.querySelector("#repeatHistoryButton").addEventListener("click", () => restoreSession(item.session));
+    document.querySelector("#historyActionButton").addEventListener("click", () => {
+      if (isActive) resumeConversation(item);
+      else restoreSession(item.session);
+    });
   } catch (error) {
     els.historyDetailPanel.innerHTML = `<p class="form-error">${error.message}</p>`;
   }
@@ -1099,14 +1202,16 @@ function resetContextSelections() {
 }
 
 function resetAll() {
+  state.screenStack = [];
   state.activeSession = null;
   state.conversationId = "";
   state.messages = [];
   state.latestFeedbackText = "";
   state.sessionStarted = false;
+  state.waitingForAssistant = false;
   els.feedbackPanel.innerHTML = "";
   resetContextSelections();
-  goTo("home");
+  goTo("home", { replace: true });
 }
 
 async function handlePrimaryAction() {
