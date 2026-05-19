@@ -1008,8 +1008,8 @@ function assertProviderKey(provider) {
   return appOpenAIKey;
 }
 
-async function callModelWithUsage({ modelType, instructions, input }) {
-  const settings = modelSettingsFor(modelType);
+async function callModelWithUsage({ modelType, instructions, input, overrides = {} }) {
+  const settings = { ...modelSettingsFor(modelType), ...overrides };
   const apiKey = assertProviderKey(settings.provider);
   if (settings.provider === "anthropic") {
     const result = await callAnthropicWithUsage({
@@ -1119,40 +1119,58 @@ async function callAnthropicWithUsage({
     maxTokens = Math.min(64000, budget + 2048);
   }
 
-  const payload = {
-    model,
-    max_tokens: maxTokens,
-    system: instructions,
-    messages: [{ role: "user", content: input }]
+  const buildPayload = ({ includeThinking = true, tokenLimit = maxTokens } = {}) => {
+    const payload = {
+      model,
+      max_tokens: tokenLimit,
+      system: instructions,
+      messages: [{ role: "user", content: input }]
+    };
+    if (temperature !== "") payload.temperature = Number(temperature);
+    if (topP !== "") payload.top_p = Number(topP);
+
+    if (includeThinking && effectiveType === "adaptive") {
+      payload.thinking = { type: "adaptive" };
+    } else if (includeThinking && effectiveType === "enabled") {
+      const display = thinkingDisplay === "summarized" || thinkingDisplay === "omitted" ? thinkingDisplay : "omitted";
+      payload.thinking = { type: "enabled", budget_tokens: budget, display };
+    }
+    return payload;
   };
-  if (temperature !== "") payload.temperature = Number(temperature);
-  if (topP !== "") payload.top_p = Number(topP);
 
-  if (effectiveType === "adaptive") {
-    payload.thinking = { type: "adaptive" };
-  } else if (effectiveType === "enabled") {
-    const display = thinkingDisplay === "summarized" || thinkingDisplay === "omitted" ? thinkingDisplay : "omitted";
-    payload.thinking = { type: "enabled", budget_tokens: budget, display };
+  const requestAnthropic = async (payload) => {
+    const result = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "anthropic-version": "2023-06-01",
+        "x-api-key": apiKey
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const data = await result.json().catch(() => ({}));
+    if (!result.ok) {
+      const message = data?.error?.message || `Anthropic API request failed with status ${result.status}.`;
+      throw new Error(message);
+    }
+    return data;
+  };
+
+  let data = await requestAnthropic(buildPayload());
+  let text = extractAnthropicText(data);
+
+  if (!text && effectiveType !== "disabled") {
+    const retryTokens = Math.max(maxTokens, 2048);
+    data = await requestAnthropic(buildPayload({ includeThinking: false, tokenLimit: retryTokens }));
+    text = extractAnthropicText(data);
   }
 
-  const result = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "anthropic-version": "2023-06-01",
-      "x-api-key": apiKey
-    },
-    body: JSON.stringify(payload)
-  });
-
-  const data = await result.json().catch(() => ({}));
-  if (!result.ok) {
-    const message = data?.error?.message || `Anthropic API request failed with status ${result.status}.`;
-    throw new Error(message);
+  if (!text) {
+    const contentTypes = (data.content || []).map((block) => block?.type).filter(Boolean).join(", ") || "none";
+    const reason = data.stop_reason ? ` stop_reason=${data.stop_reason}` : "";
+    throw new Error(`Claude 응답에서 텍스트를 찾지 못했습니다.${reason} content_types=${contentTypes}`);
   }
-
-  const text = extractAnthropicText(data);
-  if (!text) throw new Error("Claude 응답에서 텍스트를 찾지 못했습니다.");
   return { text, usage: normalizeAnthropicUsage(data.usage) };
 }
 
@@ -1712,6 +1730,56 @@ function openingLineInputFor(session, persona, caseItem) {
   ].join("\n");
 }
 
+function openingLineBatchInputFor(persona, caseItems = []) {
+  const cases = caseItems.map((item) => ({
+    id: item.id,
+    relationship: item.relationshipLabel,
+    relationshipGuidance: relationshipGuidance[item.relationship] || "",
+    setting: item.settingLabel,
+    settingGuidance: settingGuidance[item.setting] || "",
+    goal: item.goalLabel
+  }));
+  return [
+    guardrailPrompt,
+    "",
+    "관리자 첫 시작 문장 배치 생성 작업:",
+    "- 아래 케이스마다 첫 시작 문장 1개를 만든다.",
+    "- 각 문장은 관계, 상황, 페르소나의 핵심 갈등이 자연스럽게 느껴져야 한다.",
+    "- 첫 문장부터 복음이나 교회 이야기로 바로 뛰어들지 않는다. 단, faith_topic_arose 설정은 신앙/교회 주제에 대한 조심스러운 반응을 포함할 수 있다.",
+    "- 각 문장은 12~42자 정도의 자연스러운 한국어 구어체로 쓴다.",
+    "- 케이스끼리 같은 문장 구조와 말버릇을 반복하지 않는다.",
+    "- 설명, 번호, 마크다운, 내부 분석은 출력하지 않는다.",
+    "",
+    "선택된 페르소나 요약:",
+    formatPersonaCard(persona),
+    "",
+    "생성 케이스:",
+    JSON.stringify(cases, null, 2),
+    "",
+    "출력 형식:",
+    "[{\"id\":\"케이스 ID\",\"openingLine\":\"첫 시작 문장\"}]",
+    "",
+    "JSON 배열만 출력하라. 다른 텍스트는 출력하지 않는다."
+  ].join("\n");
+}
+
+function parseOpeningLineBatch(text = "") {
+  const clean = String(text || "")
+    .replace(/^```(?:json)?/i, "")
+    .replace(/```$/i, "")
+    .trim();
+  const start = clean.indexOf("[");
+  const end = clean.lastIndexOf("]");
+  const jsonText = start >= 0 && end > start ? clean.slice(start, end + 1) : clean;
+  const parsed = JSON.parse(jsonText);
+  if (!Array.isArray(parsed)) throw new Error("Claude 배치 응답이 JSON 배열이 아닙니다.");
+  return new Map(
+    parsed
+      .filter((item) => item && typeof item.id === "string")
+      .map((item) => [item.id, String(item.openingLine || item.text || "").trim()])
+  );
+}
+
 function publicOpeningLineCase(item = {}) {
   return {
     id: item.id || "",
@@ -1789,30 +1857,48 @@ async function runOpeningLineJob(jobId, actor) {
       throw new Error("현재 챗봇 모델 공급자가 Anthropic이 아닙니다. 관리자 모델 설정을 Claude로 바꾼 뒤 실행하세요.");
     }
     assertProviderKey("anthropic");
+    const casesByPersona = new Map();
     for (const item of job.cases) {
-      const persona = getPersona(item.personaId);
-      const session = {
-        personaId: item.personaId,
-        relationship: item.relationship,
-        setting: item.setting,
-        goal: item.goal || openingLineGoal
-      };
-      const input = openingLineInputFor(session, persona, item);
+      const list = casesByPersona.get(item.personaId) || [];
+      list.push(item);
+      casesByPersona.set(item.personaId, list);
+    }
+
+    for (const [personaId, caseItems] of casesByPersona) {
+      const persona = getPersona(personaId);
+      const input = openingLineBatchInputFor(persona, caseItems);
       try {
         const { text, usage, model, provider } = await callModelWithUsage({
           modelType: "chat",
           instructions: personaPrompt,
-          input
+          input,
+          overrides: {
+            maxOutputTokens: Math.max(3200, Math.min(6000, Number(settings.maxOutputTokens || 3200))),
+            thinkingType: "disabled",
+            thinkingBudgetTokens: 0
+          }
         });
         const usageRecord = estimateUsage(input, text, usage);
         const cost = estimateCost({ provider, model, modelType: "chat", ...usageRecord });
-        item.openingLine = firstOpeningSentence(text);
-        item.fullText = text;
-        item.provider = provider;
-        item.model = model;
-        item.inputTokens = usageRecord.inputTokens;
-        item.outputTokens = usageRecord.outputTokens;
-        item.estimatedCostKrw = cost.estimatedCostKrw;
+        const generated = parseOpeningLineBatch(text);
+        const perCaseInputTokens = Math.round(usageRecord.inputTokens / Math.max(1, caseItems.length));
+        const perCaseOutputTokens = Math.round(usageRecord.outputTokens / Math.max(1, caseItems.length));
+        const perCaseCostKrw = Number((cost.estimatedCostKrw / Math.max(1, caseItems.length)).toFixed(2));
+        for (const item of caseItems) {
+          const openingLine = generated.get(item.id);
+          if (!openingLine) {
+            item.error = "배치 응답에서 해당 케이스 문장을 찾지 못했습니다.";
+            job.failed += 1;
+          } else {
+            item.openingLine = firstOpeningSentence(openingLine);
+            item.fullText = openingLine;
+          }
+          item.provider = provider;
+          item.model = model;
+          item.inputTokens = perCaseInputTokens;
+          item.outputTokens = perCaseOutputTokens;
+          item.estimatedCostKrw = perCaseCostKrw;
+        }
         recordUsageEvent({
           userId: actor.id,
           eventType: "opening_line_generation",
@@ -1824,11 +1910,11 @@ async function runOpeningLineJob(jobId, actor) {
           usage
         });
       } catch (error) {
-        item.error = error.message || "생성 실패";
-        job.failed += 1;
+        for (const item of caseItems) item.error = error.message || "생성 실패";
+        job.failed += caseItems.length;
       }
-      job.completed += 1;
-      if (job.completed % 12 === 0) await saveDb();
+      job.completed += caseItems.length;
+      await saveDb();
     }
     job.status = job.failed ? "completed_with_errors" : "completed";
   } catch (error) {
