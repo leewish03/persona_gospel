@@ -1,0 +1,61 @@
+{
+  "users": [
+    {
+      "id": "admin-user",
+      "provider": "dev",
+      "providerId": "dev@example.local",
+      "email": "dev@example.local",
+      "displayName": "개발용 사용자",
+      "avatarUrl": "",
+      "role": "admin",
+      "profile": {
+        "name": "Admin",
+        "age": "24",
+        "gender": "여성",
+        "church": "서울북부교회",
+        "useCase": "CBF 활동"
+      },
+      "createdAt": "2026-05-16T00:49:50.083Z",
+      "updatedAt": "2026-05-16T00:49:52.481Z",
+      "lastLoginAt": "2026-05-16T00:49:52.481Z"
+    }
+  ],
+  "conversations": [],
+  "usageEvents": [],
+  "settings": {
+    "donation": {
+      "title": "후원",
+      "body": "이 앱의 AI 호출 비용은 운영자가 부담합니다. 지속 운영을 돕고 싶다면 아래 안내를 통해 자발적으로 후원할 수 있습니다.",
+      "account": "",
+      "enabled": true
+    },
+    "cost": {
+      "usdToKrw": 1380,
+      "monthlyBudgetKrw": 0
+    },
+    "ai": {
+      "chat": {
+        "provider": "openai",
+        "model": "gpt-5.4-mini",
+        "maxOutputTokens": 1400,
+        "temperature": "",
+        "topP": "",
+        "reasoningEffort": "high",
+        "thinkingType": "disabled",
+        "thinkingBudgetTokens": 0,
+        "thinkingDisplay": "omitted"
+      },
+      "feedback": {
+        "provider": "openai",
+        "model": "gpt-5.4",
+        "maxOutputTokens": 2600,
+        "temperature": "",
+        "topP": "",
+        "reasoningEffort": "medium",
+        "thinkingType": "disabled",
+        "thinkingBudgetTokens": 0,
+        "thinkingDisplay": "omitted"
+      }
+    }
+  }
+}
