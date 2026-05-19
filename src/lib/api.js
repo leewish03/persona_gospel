@@ -27,3 +27,7 @@ export async function putJson(path, payload = {}) {
     })
   );
 }
+
+export async function deleteJson(path) {
+  return parseJson(await fetch(path, { method: "DELETE" }));
+}

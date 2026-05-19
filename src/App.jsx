@@ -4,6 +4,7 @@ import {
   BookOpen,
   CheckCircle2,
   ChevronLeft,
+  CircleStop,
   Download,
   Home,
   Play,
@@ -734,6 +735,7 @@ function AdminScreen({ state, actions }) {
         data={openingLines || {}}
         chatSettings={settings.settings?.ai?.chat || {}}
         onStart={actions.startOpeningLinesJob}
+        onCancel={actions.cancelOpeningLinesJob}
       />
       <Card>
         <CardHeader>
@@ -1138,10 +1140,10 @@ function downloadJson(filename, data) {
   URL.revokeObjectURL(url);
 }
 
-function OpeningLinesAdminCard({ data, chatSettings, onStart }) {
+function OpeningLinesAdminCard({ data, chatSettings, onStart, onCancel }) {
   const latest = data.latest || null;
-  const currentJob = data.currentJob || (data.jobs || []).find((job) => ["queued", "running"].includes(job.status));
-  const active = currentJob && ["queued", "running"].includes(currentJob.status);
+  const currentJob = data.currentJob || (data.jobs || []).find((job) => ["queued", "running", "cancelling"].includes(job.status));
+  const active = currentJob && ["queued", "running", "cancelling"].includes(currentJob.status);
   const progress = currentJob?.total ? percentOf(currentJob.completed || 0, currentJob.total) : 0;
   const rows = latest?.cases || currentJob?.cases || [];
   const provider = chatSettings.provider === "anthropic" ? "Anthropic" : "OpenAI";
@@ -1192,6 +1194,14 @@ function OpeningLinesAdminCard({ data, chatSettings, onStart }) {
           <Button disabled={!canStart} onClick={onStart}>
             {active ? <RefreshCw className="animate-spin" /> : <Play />}
             {active ? "생성 중" : "108개 생성 실행"}
+          </Button>
+          <Button
+            variant="destructive"
+            disabled={!active || !currentJob?.id || currentJob.status === "cancelling"}
+            onClick={() => onCancel(currentJob.id)}
+          >
+            <CircleStop />
+            {currentJob?.status === "cancelling" ? "취소 중" : "생성 취소"}
           </Button>
           <Button
             variant="outline"

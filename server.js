@@ -1823,6 +1823,7 @@ function publicOpeningLineJob(job = {}, { includeCases = false } = {}) {
   const payload = {
     id: job.id || "",
     status: job.status || "queued",
+    cancelRequested: Boolean(job.cancelRequested),
     provider: job.provider || "",
     model: job.model || "",
     total: Number(job.total || 0),
@@ -1865,6 +1866,10 @@ async function runOpeningLineJob(jobId, actor) {
     }
 
     for (const [personaId, caseItems] of casesByPersona) {
+      if (job.cancelRequested) {
+        job.status = "cancelled";
+        break;
+      }
       const persona = getPersona(personaId);
       const input = openingLineBatchInputFor(persona, caseItems);
       try {
@@ -1916,7 +1921,7 @@ async function runOpeningLineJob(jobId, actor) {
       job.completed += caseItems.length;
       await saveDb();
     }
-    job.status = job.failed ? "completed_with_errors" : "completed";
+    if (job.status !== "cancelled") job.status = job.failed ? "completed_with_errors" : "completed";
   } catch (error) {
     job.status = "failed";
     job.error = error.message || "첫 문장 생성 작업 실패";
@@ -2365,6 +2370,22 @@ async function handleAppApi(req, res, url) {
     if (!job) {
       json(res, 404, { error: "첫 문장 생성 작업을 찾지 못했습니다." });
       return true;
+    }
+    json(res, 200, { job: publicOpeningLineJob(job, { includeCases: true }) });
+    return true;
+  }
+
+  if (openingLineJobMatch && req.method === "DELETE") {
+    const user = requireAdmin(req, res);
+    if (!user) return true;
+    const job = openingLineJobs.get(decodeURIComponent(openingLineJobMatch[1]));
+    if (!job) {
+      json(res, 404, { error: "첫 문장 생성 작업을 찾지 못했습니다." });
+      return true;
+    }
+    if (["queued", "running"].includes(job.status)) {
+      job.cancelRequested = true;
+      job.status = "cancelling";
     }
     json(res, 200, { job: publicOpeningLineJob(job, { includeCases: true }) });
     return true;

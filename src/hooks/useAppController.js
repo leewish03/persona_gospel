@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { getJson, postJson, putJson } from "@/lib/api";
+import { deleteJson, getJson, postJson, putJson } from "@/lib/api";
 import { flowScreens, profileDefaults, setupScreens } from "@/lib/constants";
 import { markdownToHtml, sessionLabels } from "@/lib/format";
 
@@ -564,7 +564,7 @@ export function useAppController() {
           ? { ...value.data, openingLines: { ...(value.data.openingLines || {}), currentJob } }
           : value.data
       }));
-      while (currentJob?.id && ["queued", "running"].includes(currentJob.status)) {
+      while (currentJob?.id && ["queued", "running", "cancelling"].includes(currentJob.status)) {
         await wait(2500);
         const data = await getJson(`/api/admin/opening-lines/${encodeURIComponent(currentJob.id)}`);
         currentJob = data.job;
@@ -594,6 +594,21 @@ export function useAppController() {
             }
           : value.data
       }));
+    }
+  }, [isAdmin]);
+
+  const cancelOpeningLinesJob = useCallback(async (jobId) => {
+    if (!isAdmin || !jobId) return;
+    try {
+      const data = await deleteJson(`/api/admin/opening-lines/${encodeURIComponent(jobId)}`);
+      setAdmin((value) => ({
+        ...value,
+        data: value.data
+          ? { ...value.data, openingLines: { ...(value.data.openingLines || {}), currentJob: data.job } }
+          : value.data
+      }));
+    } catch (error) {
+      setErrors((value) => ({ ...value, global: error.message }));
     }
   }, [isAdmin]);
 
@@ -708,6 +723,7 @@ export function useAppController() {
       saveAdminUser,
       saveAdminSettings,
       startOpeningLinesJob,
+      cancelOpeningLinesJob,
       shareFeedback,
       handlePrimaryAction,
       handleSecondaryAction
