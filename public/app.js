@@ -857,6 +857,44 @@ function escapeHtml(value = "") {
     .replace(/"/g, "&quot;");
 }
 
+function renderFeedbackLoading() {
+  els.feedbackPanel.innerHTML = `
+    <img class="feedback-visual" src="/assets/feedback-report.jpg" alt="노트와 말풍선이 놓인 피드백 이미지" />
+    <h3>피드백 리포트</h3>
+    <p>대화 내용을 바탕으로 피드백을 생성하고 있습니다.</p>
+  `;
+}
+
+function renderFeedbackReport(text) {
+  els.feedbackPanel.innerHTML = `
+    <img class="feedback-visual" src="/assets/feedback-report.jpg" alt="노트와 말풍선이 놓인 피드백 이미지" />
+    <h3>피드백 리포트</h3>
+    <div class="feedback-content">${markdownToHtml(text)}</div>
+  `;
+}
+
+function renderFeedbackError(message) {
+  els.feedbackPanel.innerHTML = `
+    <div class="feedback-error" role="alert">
+      <h3>피드백을 생성하지 못했습니다</h3>
+      <p>${escapeHtml(message || "일시적인 오류가 발생했습니다.")}</p>
+      <p>대화 내용은 저장되어 있습니다. 잠시 후 다시 시도하거나 대화 화면으로 돌아가 이어서 훈련할 수 있습니다.</p>
+      <div class="feedback-error-actions">
+        <button class="primary-button" type="button" id="retryFeedbackButton">다시 시도</button>
+        <button class="secondary-button" type="button" id="returnToChatButton">대화로 돌아가기</button>
+      </div>
+    </div>
+  `;
+  document.querySelector("#retryFeedbackButton")?.addEventListener("click", () => {
+    void finishSession();
+  });
+  document.querySelector("#returnToChatButton")?.addEventListener("click", () => {
+    state.sessionStarted = true;
+    goTo("chat");
+    requestAnimationFrame(() => els.messageInput.focus());
+  });
+}
+
 async function finishSession() {
   if (state.latestFeedbackText) {
     state.sessionStarted = false;
@@ -867,11 +905,7 @@ async function finishSession() {
   state.waitingForAssistant = false;
   setBusy(true, "primary");
   goTo("feedback");
-  els.feedbackPanel.innerHTML = `
-    <img class="feedback-visual" src="/assets/feedback-report.jpg" alt="노트와 말풍선이 놓인 피드백 이미지" />
-    <h3>피드백 리포트</h3>
-    <p>대화 내용을 바탕으로 피드백을 생성하고 있습니다.</p>
-  `;
+  renderFeedbackLoading();
 
   try {
     const data = await postJson("/api/feedback", {
@@ -880,18 +914,15 @@ async function finishSession() {
       messages: state.messages.filter((message) => message.role !== "system")
     });
     state.latestFeedbackText = data.text;
-    els.feedbackPanel.innerHTML = `
-      <img class="feedback-visual" src="/assets/feedback-report.jpg" alt="노트와 말풍선이 놓인 피드백 이미지" />
-      <h3>피드백 리포트</h3>
-      ${markdownToHtml(data.text)}
-    `;
+    renderFeedbackReport(data.text);
     state.sessionStarted = false;
     state.historyLoaded = false;
     setBusy(false);
   } catch (error) {
     state.latestFeedbackText = "";
-    els.feedbackPanel.innerHTML = `<h3>피드백 리포트</h3><p>${error.message}</p>`;
-    state.sessionStarted = false;
+    renderFeedbackError(error.message);
+    state.sessionStarted = true;
+    state.historyLoaded = false;
     setBusy(false);
   }
 }
@@ -1067,11 +1098,13 @@ async function loadHistoryDetail(id) {
       </article>
       <article class="history-detail-card">
         <h3>피드백 리포트</h3>
-        ${
-          item.feedbackText
-            ? markdownToHtml(item.feedbackText)
-            : `<p>${isActive ? "대화를 이어가거나 종료하면 피드백을 받을 수 있습니다." : "아직 피드백이 없습니다."}</p>`
-        }
+        <div class="feedback-content">
+          ${
+            item.feedbackText
+              ? markdownToHtml(item.feedbackText)
+              : `<p>${isActive ? "대화를 이어가거나 종료하면 피드백을 받을 수 있습니다." : "아직 피드백이 없습니다."}</p>`
+          }
+        </div>
       </article>
     `;
     document.querySelector("#historyActionButton").addEventListener("click", () => {

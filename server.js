@@ -1917,14 +1917,31 @@ async function handleApi(req, res, url) {
         json(res, 200, { text: conversation.feedbackText, alreadyFinished: true });
         return;
       }
-      const input = feedbackInputFor(session, persona, body.messages || []);
-      const { text, usage, model } = await callModelWithUsage({
-        modelType: "feedback",
-        instructions: feedbackPrompt,
-        input
-      });
+      const feedbackMessages = body.messages || [];
       if (conversation) {
-        conversation.messages = body.messages || conversation.messages;
+        conversation.messages = feedbackMessages;
+        conversation.updatedAt = new Date().toISOString();
+        await saveDb();
+      }
+      const input = feedbackInputFor(session, persona, feedbackMessages);
+      let text = "";
+      let usage = {};
+      let model = "";
+      try {
+        const result = await callModelWithUsage({
+          modelType: "feedback",
+          instructions: feedbackPrompt,
+          input
+        });
+        text = result.text;
+        usage = result.usage;
+        model = result.model;
+      } catch (error) {
+        console.error("Feedback generation failed.", error);
+        json(res, 502, { error: "피드백 생성에 실패했습니다. 대화 내용은 저장되어 있으니 잠시 후 다시 시도해주세요." });
+        return;
+      }
+      if (conversation) {
         conversation.feedbackText = text;
         conversation.feedbackSummary = summarizeFeedback(text);
         conversation.status = "finished";
