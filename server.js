@@ -758,6 +758,7 @@ function publicConversation(conversation, { includeMessages = false, includeFeed
     relationship: conversation.session?.relationship || "",
     setting: conversation.session?.setting || "",
     goal: conversation.session?.goal || "",
+    visibleScene: conversation.session?.visibleScene || "",
     messageCount: conversation.messages?.length || 0,
     feedbackSummary: conversation.feedbackSummary || summarizeFeedback(conversation.feedbackText || ""),
     status: conversation.status,
@@ -1642,6 +1643,27 @@ function feedbackInputFor(session, persona, messages) {
   ].join("\n");
 }
 
+function visibleSceneFor(session = {}, persona = {}) {
+  const name = persona.name || "상대";
+  const concern =
+    persona.innerConflicts?.[0] ||
+    persona.gospelBarriers?.[0] ||
+    persona.shortDescription ||
+    "마음에 정리되지 않은 생각이 남아 있다";
+  const shortConcern = String(concern).replace(/[.。]$/, "");
+  const relationship = relationshipLabels[session.relationship] || "대화 상대";
+  const settingScenes = {
+    cafe_catchup: `카페에서 ${relationship}과 마주 앉았고, ${name}은 "${shortConcern}"라는 마음을 숨기고 있다.`,
+    meal_after_group: `모임이 끝나고 둘만 남았고, ${name}은 "${shortConcern}"라는 생각을 조심스럽게 꺼내려 한다.`,
+    walk_after_work: `퇴근길에 나란히 걷고 있고, ${name}은 "${shortConcern}"라는 마음 때문에 발걸음이 무겁다.`,
+    late_night_dm: `늦은 밤 카톡/DM 창이 열렸고, ${name}은 "${shortConcern}"라는 생각 때문에 잠들지 못하고 있다.`,
+    campus_or_office_break: `학교/직장 쉬는 시간에 잠깐 마주 앉았고, ${name}은 짧은 틈에도 "${shortConcern}"라는 생각이 떠오른다.`,
+    concern_shared: `${name}은 "${shortConcern}"라는 고민을 처음으로 말해보려는 순간에 있다.`,
+    faith_topic_arose: `신앙/교회 이야기가 대화의 문턱에 올라왔고, ${name}은 그 주제가 자기 삶에 닿는지 조심스럽게 살피고 있다.`
+  };
+  return settingScenes[session.setting] || `${name}은 ${relationship}과 마주 앉아 자기 마음을 조심스럽게 열어보려 한다.`;
+}
+
 const openingLineRelationships = ["first_meeting", "acquaintance", "casual_friend", "old_friend", "prior_faith_talk"];
 const openingLineSettings = [
   "cafe_catchup",
@@ -1699,7 +1721,11 @@ function buildOpeningLineCases() {
         setting: item.setting,
         settingLabel: settingLabels[item.setting] || item.setting,
         goal: openingLineGoal,
-        goalLabel: goalLabels[openingLineGoal] || openingLineGoal
+        goalLabel: goalLabels[openingLineGoal] || openingLineGoal,
+        visibleScene: visibleSceneFor(
+          { personaId: persona.id, relationship: item.relationship, setting: item.setting, goal: openingLineGoal },
+          persona
+        )
       });
     });
   });
@@ -1738,6 +1764,7 @@ function openingLineInputFor(session, persona, caseItem) {
 function openingLineBatchInputFor(persona, caseItems = []) {
   const cases = caseItems.map((item) => ({
     id: item.id,
+    visibleSceneDraft: item.visibleScene,
     relationship: item.relationshipLabel,
     relationshipGuidance: relationshipGuidance[item.relationship] || "",
     setting: item.settingLabel,
@@ -1751,6 +1778,9 @@ function openingLineBatchInputFor(persona, caseItems = []) {
     "- 아래 케이스마다 사용자가 처음 보게 되는 첫 시작 문장 1개를 만든다.",
     "- 첫 문장은 영화의 첫 장면처럼 작동해야 한다. 사용자는 이 문장 앞에 무슨 일이 있었는지 모른다.",
     "- 각 문장 자체만 읽어도 현재 장면, 페르소나의 상태, 대화가 시작될 방향이 이해되어야 한다.",
+    "- 각 케이스에는 visibleScene도 함께 만든다. visibleScene은 채팅 상단에 표시될 상황 설명이다.",
+    "- visibleScene은 35~85자 정도의 3인칭 현재 상황 설명으로 쓴다.",
+    "- visibleScene은 사용자가 보지 못한 앞 대화를 가리키지 않고, 지금 화면에 열린 첫 장면만 설명한다.",
     "- 보이지 않는 앞맥락을 지시하지 않는다.",
     "- 금지 표현: 이런 얘기, 저런 얘기, 그 이야기, 그 얘기, 저번에 하던 거, 아까, 방금, 계속 생각나던 것, 꺼내는 게, 꺼내놓고, 말한 것처럼.",
     "- concern_shared 설정은 '이미 고민을 말한 뒤'처럼 쓰지 말고, 페르소나의 고민 내용을 첫 문장 안에 직접 드러낸다.",
@@ -1770,7 +1800,7 @@ function openingLineBatchInputFor(persona, caseItems = []) {
     JSON.stringify(cases, null, 2),
     "",
     "출력 형식:",
-    "[{\"id\":\"케이스 ID\",\"openingLine\":\"첫 시작 문장\"}]",
+    "[{\"id\":\"케이스 ID\",\"visibleScene\":\"채팅 상단 상황 설명\",\"openingLine\":\"첫 시작 문장\"}]",
     "",
     "JSON 배열만 출력하라. 다른 텍스트는 출력하지 않는다."
   ].join("\n");
@@ -1789,7 +1819,13 @@ function parseOpeningLineBatch(text = "") {
   return new Map(
     parsed
       .filter((item) => item && typeof item.id === "string")
-      .map((item) => [item.id, String(item.openingLine || item.text || "").trim()])
+      .map((item) => [
+        item.id,
+        {
+          openingLine: String(item.openingLine || item.text || "").trim(),
+          visibleScene: String(item.visibleScene || item.scene || "").trim()
+        }
+      ])
   );
 }
 
@@ -1808,6 +1844,7 @@ function openingLineRepairInputFor(persona, caseItems = []) {
     id: item.id,
     relationship: item.relationshipLabel,
     setting: item.settingLabel,
+    visibleScene: item.visibleScene || "",
     previousLine: item.openingLine || "",
     issue: item.error || openingLineIssue(item.openingLine),
     goal: item.goalLabel
@@ -1817,6 +1854,7 @@ function openingLineRepairInputFor(persona, caseItems = []) {
     "- 아래 문장들은 첫 대화 시작 문장으로 부적절해서 수정해야 한다.",
     "- 사용자는 이 문장 앞에 무슨 일이 있었는지 모른다.",
     "- 수정 문장 자체만 읽어도 현재 장면, 페르소나의 상태, 대화가 시작될 방향이 이해되어야 한다.",
+    "- visibleScene도 필요하면 함께 수정한다. visibleScene은 채팅 상단에 표시될 3인칭 현재 상황 설명이다.",
     "- 보이지 않는 앞맥락 지시를 쓰지 않는다.",
     "- 금지 표현: 이런 얘기, 저런 얘기, 그 이야기, 그 얘기, 그 주제, 저번, 아까, 방금, 하던 거, 꺼내는 게, 꺼내놓고, 말한 것처럼, 뜬금없다, 계속 생각나던 것.",
     "- concern_shared 설정은 고민 내용을 문장 안에 직접 드러낸다.",
@@ -1831,7 +1869,7 @@ function openingLineRepairInputFor(persona, caseItems = []) {
     JSON.stringify(cases, null, 2),
     "",
     "출력 형식:",
-    "[{\"id\":\"케이스 ID\",\"openingLine\":\"수정된 첫 시작 문장\"}]",
+    "[{\"id\":\"케이스 ID\",\"visibleScene\":\"수정된 상황 설명\",\"openingLine\":\"수정된 첫 시작 문장\"}]",
     "",
     "JSON 배열만 출력하라."
   ].join("\n");
@@ -1849,6 +1887,7 @@ function publicOpeningLineCase(item = {}) {
     settingLabel: item.settingLabel || "",
     goal: item.goal || openingLineGoal,
     goalLabel: item.goalLabel || goalLabels[openingLineGoal],
+    visibleScene: item.visibleScene || "",
     openingLine: item.openingLine || "",
     fullText: item.fullText || "",
     provider: item.provider || "",
@@ -1945,10 +1984,12 @@ async function runOpeningLineJob(jobId, actor) {
         const generated = parseOpeningLineBatch(text);
         const needsRepair = [];
         for (const item of caseItems) {
-          const openingLine = firstOpeningSentence(generated.get(item.id) || "");
+          const generatedItem = generated.get(item.id) || {};
+          const openingLine = firstOpeningSentence(generatedItem.openingLine || "");
+          if (generatedItem.visibleScene) item.visibleScene = generatedItem.visibleScene;
           const issue = openingLine ? openingLineIssue(openingLine) : "배치 응답에서 해당 케이스 문장을 찾지 못했습니다.";
           if (issue) needsRepair.push({ ...item, openingLine, error: issue });
-          else generated.set(item.id, openingLine);
+          else generated.set(item.id, { ...generatedItem, openingLine, visibleScene: generatedItem.visibleScene || item.visibleScene });
         }
         if (needsRepair.length) {
           const repairInput = openingLineRepairInputFor(persona, needsRepair);
@@ -1964,15 +2005,23 @@ async function runOpeningLineJob(jobId, actor) {
           });
           const repaired = parseOpeningLineBatch(repair.text);
           for (const item of needsRepair) {
-            const repairedLine = firstOpeningSentence(repaired.get(item.id) || "");
-            if (repairedLine && !openingLineIssue(repairedLine)) generated.set(item.id, repairedLine);
+            const repairedItem = repaired.get(item.id) || {};
+            const repairedLine = firstOpeningSentence(repairedItem.openingLine || "");
+            if (repairedItem.visibleScene) item.visibleScene = repairedItem.visibleScene;
+            if (repairedLine && !openingLineIssue(repairedLine)) {
+              generated.set(item.id, {
+                openingLine: repairedLine,
+                visibleScene: repairedItem.visibleScene || item.visibleScene
+              });
+            }
           }
         }
         const perCaseInputTokens = Math.round(usageRecord.inputTokens / Math.max(1, caseItems.length));
         const perCaseOutputTokens = Math.round(usageRecord.outputTokens / Math.max(1, caseItems.length));
         const perCaseCostKrw = Number((cost.estimatedCostKrw / Math.max(1, caseItems.length)).toFixed(2));
         for (const item of caseItems) {
-          const openingLine = generated.get(item.id);
+          const generatedItem = generated.get(item.id) || {};
+          const openingLine = generatedItem.openingLine || "";
           const issue = openingLineIssue(openingLine);
           if (!openingLine || issue) {
             item.error = issue || "배치 응답에서 해당 케이스 문장을 찾지 못했습니다.";
@@ -1981,6 +2030,7 @@ async function runOpeningLineJob(jobId, actor) {
             item.openingLine = openingLine;
             item.fullText = openingLine;
           }
+          item.visibleScene = generatedItem.visibleScene || item.visibleScene || visibleSceneFor(item, persona);
           item.provider = provider;
           item.model = model;
           item.inputTokens = perCaseInputTokens;
@@ -2522,7 +2572,8 @@ async function handleApi(req, res, url) {
     const persona = getPersona(session.personaId);
 
     if (path === "/api/start") {
-      const input = initialPromptFor(session, persona);
+      const sessionWithScene = { ...session, visibleScene: visibleSceneFor(session, persona) };
+      const input = initialPromptFor(sessionWithScene, persona);
       const { text, usage, model, provider } = await callModelWithUsage({
         modelType: "chat",
         instructions: personaPrompt,
@@ -2530,7 +2581,7 @@ async function handleApi(req, res, url) {
       });
       const conversation = createConversation({
         userId: user.id,
-        session,
+        session: sessionWithScene,
         messages: [{ role: "assistant", content: text }]
       });
       recordUsageEvent({
@@ -2545,7 +2596,7 @@ async function handleApi(req, res, url) {
         usage
       });
       await saveDb();
-      json(res, 200, { text, conversationId: conversation.id });
+      json(res, 200, { text, conversationId: conversation.id, visibleScene: sessionWithScene.visibleScene });
       return;
     }
 

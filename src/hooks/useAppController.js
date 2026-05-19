@@ -390,6 +390,7 @@ export function useAppController() {
     try {
       const data = await postJson("/api/start", { session });
       setConversationId(data.conversationId || "");
+      if (data.visibleScene) setActiveSession({ ...session, visibleScene: data.visibleScene });
       setMessages([{ role: "assistant", content: data.text }]);
       setWaitingForAssistant(false);
     } catch (error) {

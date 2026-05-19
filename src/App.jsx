@@ -450,6 +450,7 @@ function ChatScreen({ state }) {
   const listRef = useRef(null);
   const persona = state.currentPersona;
   const labels = sessionLabels(state.currentSession, state.personas);
+  const visibleScene = state.currentSession?.visibleScene || "";
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
   }, [state.messages, state.waitingForAssistant]);
@@ -457,13 +458,18 @@ function ChatScreen({ state }) {
     <div ref={listRef} className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto overscroll-y-contain rounded-2xl bg-muted p-2">
       {state.sessionStarted ? (
         <div className="shrink-0 rounded-2xl border border-border/70 bg-background px-3 py-2.5 text-sm shadow-sm">
-          <p className="mb-1.5 text-[0.65rem] font-black uppercase tracking-wide text-primary">상황 · 관계</p>
-          <p className="leading-snug text-foreground">
-            <span className="font-black text-muted-foreground">관계</span> {labels.relationship}
-          </p>
-          <p className="mt-1.5 leading-snug text-foreground">
-            <span className="font-black text-muted-foreground">상황</span> {labels.setting}
-          </p>
+          <p className="mb-1.5 text-[0.65rem] font-black uppercase tracking-wide text-primary">현재 장면</p>
+          {visibleScene ? (
+            <p className="rounded-xl bg-muted/70 px-3 py-2 text-[0.8rem] leading-5 text-foreground">{visibleScene}</p>
+          ) : null}
+          <div className="mt-2 grid gap-1 text-[0.78rem] leading-snug text-muted-foreground">
+            <p>
+              <span className="font-black">관계</span> {labels.relationship}
+            </p>
+            <p>
+              <span className="font-black">상황</span> {labels.setting}
+            </p>
+          </div>
         </div>
       ) : null}
       {state.messages.map((message, index) => (
@@ -621,6 +627,7 @@ function HistoryDetailScreen({ state, actions }) {
         </CardHeader>
         <CardContent className="grid gap-3 text-sm">
           <p>{labels.relationship} · {labels.setting}</p>
+          {item.session?.visibleScene ? <p className="rounded-xl bg-muted p-3 text-sm">{item.session.visibleScene}</p> : null}
           <p><b>훈련 초점</b> {labels.goal}</p>
           <Button onClick={() => active ? actions.resumeConversation(item) : actions.restoreSession(item.session)}>{active ? "대화 이어가기" : "같은 설정으로 다시 훈련"}</Button>
         </CardContent>
@@ -1214,13 +1221,14 @@ function OpeningLinesAdminCard({ data, chatSettings, onStart, onCancel }) {
         </div>
         {rows.length ? (
           <div className="max-h-[28rem] overflow-auto rounded-xl border">
-            <table className="w-full min-w-[760px] border-collapse text-left text-xs">
+            <table className="w-full min-w-[920px] border-collapse text-left text-xs">
               <thead className="sticky top-0 bg-muted">
                 <tr>
                   <th className="border-b p-2 font-black">#</th>
                   <th className="border-b p-2 font-black">페르소나</th>
                   <th className="border-b p-2 font-black">관계</th>
                   <th className="border-b p-2 font-black">상황</th>
+                  <th className="border-b p-2 font-black">장면 설명</th>
                   <th className="border-b p-2 font-black">첫 문장</th>
                   <th className="border-b p-2 font-black">비용</th>
                 </tr>
@@ -1232,6 +1240,7 @@ function OpeningLinesAdminCard({ data, chatSettings, onStart, onCancel }) {
                     <td className="border-b p-2 font-semibold">{item.personaName}</td>
                     <td className="border-b p-2">{item.relationshipLabel}</td>
                     <td className="border-b p-2">{item.settingLabel}</td>
+                    <td className="border-b p-2 text-muted-foreground">{item.visibleScene || "-"}</td>
                     <td className="border-b p-2">
                       {item.error ? <span className="text-destructive">{item.error}</span> : item.openingLine || "대기 중"}
                     </td>
