@@ -12,14 +12,16 @@ services:
       - key: ENABLE_DEV_LOGIN
         value: "false"
       - key: OPENAI_CHAT_MODEL
-        value: chat-latest
+        value: gpt-5.4-mini
       - key: OPENAI_CHAT_REASONING_EFFORT
-        value: "none"
+        value: high
       - key: OPENAI_FEEDBACK_MODEL
         value: gpt-5.4
       - key: APP_BASE_URL
         value: https://gospel-conversation-simulator.onrender.com
       - key: OPENAI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
         sync: false
       - key: ADMIN_EMAILS
         sync: false

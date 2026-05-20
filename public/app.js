@@ -474,6 +474,97 @@ function renderDonationPanel() {
   `;
 }
 
+function optionList(options, selected) {
+  return options
+    .map((option) => `<option value="${option.value}" ${selected === option.value ? "selected" : ""}>${option.label}</option>`)
+    .join("");
+}
+
+function modelSettingsFields(kind, title, settings = {}) {
+  const prefix = kind === "feedback" ? "feedback" : "chat";
+  const provider = settings.provider || "openai";
+  const reasoning = settings.reasoningEffort || "none";
+  const thinkingType = settings.thinkingType || "disabled";
+  const thinkingDisplay = settings.thinkingDisplay || "omitted";
+  const defaultModel = prefix === "feedback" ? "gpt-5.4" : "chat-latest";
+  return `
+    <fieldset class="model-fieldset">
+      <legend>${title}</legend>
+      <label class="field">
+        <span>공급자</span>
+        <select name="${prefix}Provider">
+          ${optionList(
+            [
+              { value: "openai", label: "OpenAI" },
+              { value: "anthropic", label: "Claude / Anthropic" }
+            ],
+            provider
+          )}
+        </select>
+      </label>
+      <label class="field">
+        <span>모델</span>
+        <input name="${prefix}Model" value="${escapeHtml(settings.model || defaultModel)}" list="${prefix}ModelPresets" />
+        <datalist id="${prefix}ModelPresets">
+          <option value="chat-latest"></option>
+          <option value="gpt-5.4"></option>
+          <option value="gpt-5.4-mini"></option>
+          <option value="claude-sonnet-4-6"></option>
+          <option value="claude-haiku-4-5-20251001"></option>
+          <option value="claude-opus-4-7"></option>
+        </datalist>
+      </label>
+      <div class="model-grid">
+        <label class="field"><span>최대 출력 토큰</span><input name="${prefix}MaxOutputTokens" type="number" min="1" max="64000" value="${Number(settings.maxOutputTokens || (prefix === "feedback" ? 2600 : 1400))}" /></label>
+        <label class="field"><span>Temperature</span><input name="${prefix}Temperature" type="number" min="0" max="2" step="0.1" value="${settings.temperature ?? ""}" placeholder="기본값" /></label>
+        <label class="field"><span>Top P</span><input name="${prefix}TopP" type="number" min="0" max="1" step="0.05" value="${settings.topP ?? ""}" placeholder="기본값" /></label>
+        <label class="field">
+          <span>OpenAI reasoning</span>
+          <select name="${prefix}ReasoningEffort">
+            ${optionList(
+              [
+                { value: "none", label: "없음" },
+                { value: "minimal", label: "minimal" },
+                { value: "low", label: "low" },
+                { value: "medium", label: "medium" },
+                { value: "high", label: "high" },
+                { value: "xhigh", label: "xhigh" }
+              ],
+              reasoning
+            )}
+          </select>
+        </label>
+        <label class="field">
+          <span>Claude thinking</span>
+          <select name="${prefix}ThinkingType">
+            ${optionList(
+              [
+                { value: "disabled", label: "사용 안 함" },
+                { value: "adaptive", label: "adaptive" },
+                { value: "enabled", label: "manual budget" }
+              ],
+              thinkingType
+            )}
+          </select>
+        </label>
+        <label class="field"><span>Thinking budget</span><input name="${prefix}ThinkingBudgetTokens" type="number" min="1024" max="64000" value="${Number(settings.thinkingBudgetTokens || 0)}" /></label>
+        <label class="field">
+          <span>Thinking 표시</span>
+          <select name="${prefix}ThinkingDisplay">
+            ${optionList(
+              [
+                { value: "omitted", label: "숨김" },
+                { value: "summarized", label: "요약" }
+              ],
+              thinkingDisplay
+            )}
+          </select>
+        </label>
+      </div>
+    </fieldset>
+  `;
+}
+
 function sessionLabels(session = {}) {
   return {
     persona: state.personas.find((entry) => entry.id === session.personaId)?.name || "페르소나",
@@ -766,6 +857,44 @@ function escapeHtml(value = "") {
     .replace(/"/g, "&quot;");
 }
 
+function renderFeedbackLoading() {
+  els.feedbackPanel.innerHTML = `
+    <img class="feedback-visual" src="/assets/feedback-report.jpg" alt="노트와 말풍선이 놓인 피드백 이미지" />
+    <h3>피드백 리포트</h3>
+    <p>대화 내용을 바탕으로 피드백을 생성하고 있습니다.</p>
+  `;
+}
+
+function renderFeedbackReport(text) {
+  els.feedbackPanel.innerHTML = `
+    <img class="feedback-visual" src="/assets/feedback-report.jpg" alt="노트와 말풍선이 놓인 피드백 이미지" />
+    <h3>피드백 리포트</h3>
+    <div class="feedback-content">${markdownToHtml(text)}</div>
+  `;
+}
+
+function renderFeedbackError(message) {
+  els.feedbackPanel.innerHTML = `
+    <div class="feedback-error" role="alert">
+      <h3>피드백을 생성하지 못했습니다</h3>
+      <p>${escapeHtml(message || "일시적인 오류가 발생했습니다.")}</p>
+      <p>대화 내용은 저장되어 있습니다. 잠시 후 다시 시도하거나 대화 화면으로 돌아가 이어서 훈련할 수 있습니다.</p>
+      <div class="feedback-error-actions">
+        <button class="primary-button" type="button" id="retryFeedbackButton">다시 시도</button>
+        <button class="secondary-button" type="button" id="returnToChatButton">대화로 돌아가기</button>
+      </div>
+    </div>
+  `;
+  document.querySelector("#retryFeedbackButton")?.addEventListener("click", () => {
+    void finishSession();
+  });
+  document.querySelector("#returnToChatButton")?.addEventListener("click", () => {
+    state.sessionStarted = true;
+    goTo("chat");
+    requestAnimationFrame(() => els.messageInput.focus());
+  });
+}
+
 async function finishSession() {
   if (state.latestFeedbackText) {
     state.sessionStarted = false;
@@ -776,11 +905,7 @@ async function finishSession() {
   state.waitingForAssistant = false;
   setBusy(true, "primary");
   goTo("feedback");
-  els.feedbackPanel.innerHTML = `
-    <img class="feedback-visual" src="/assets/feedback-report.jpg" alt="노트와 말풍선이 놓인 피드백 이미지" />
-    <h3>피드백 리포트</h3>
-    <p>대화 내용을 바탕으로 피드백을 생성하고 있습니다.</p>
-  `;
+  renderFeedbackLoading();
 
   try {
     const data = await postJson("/api/feedback", {
@@ -789,18 +914,15 @@ async function finishSession() {
       messages: state.messages.filter((message) => message.role !== "system")
     });
     state.latestFeedbackText = data.text;
-    els.feedbackPanel.innerHTML = `
-      <img class="feedback-visual" src="/assets/feedback-report.jpg" alt="노트와 말풍선이 놓인 피드백 이미지" />
-      <h3>피드백 리포트</h3>
-      ${markdownToHtml(data.text)}
-    `;
+    renderFeedbackReport(data.text);
     state.sessionStarted = false;
     state.historyLoaded = false;
     setBusy(false);
   } catch (error) {
     state.latestFeedbackText = "";
-    els.feedbackPanel.innerHTML = `<h3>피드백 리포트</h3><p>${error.message}</p>`;
-    state.sessionStarted = false;
+    renderFeedbackError(error.message);
+    state.sessionStarted = true;
+    state.historyLoaded = false;
     setBusy(false);
   }
 }
@@ -927,7 +1049,7 @@ async function continueHistoryConversation(id) {
     const data = await getJson(`/api/conversations/${encodeURIComponent(id)}`);
     const item = data.conversation;
     if (!item || item.status === "finished") {
-      addSystemMessage("이미 완료된 기록입니다. 같은 설정으로 다시 시작해주세요.");
+      els.historyList.innerHTML = `<p class="form-error">이미 완료된 기록입니다. 같은 설정으로 다시 시작해주세요.</p>`;
       return;
     }
     resumeConversation(item);
@@ -976,11 +1098,13 @@ async function loadHistoryDetail(id) {
       </article>
       <article class="history-detail-card">
         <h3>피드백 리포트</h3>
-        ${
-          item.feedbackText
-            ? markdownToHtml(item.feedbackText)
-            : `<p>${isActive ? "대화를 이어가거나 종료하면 피드백을 받을 수 있습니다." : "아직 피드백이 없습니다."}</p>`
-        }
+        <div class="feedback-content">
+          ${
+            item.feedbackText
+              ? markdownToHtml(item.feedbackText)
+              : `<p>${isActive ? "대화를 이어가거나 종료하면 피드백을 받을 수 있습니다." : "아직 피드백이 없습니다."}</p>`
+          }
+        </div>
       </article>
     `;
     document.querySelector("#historyActionButton").addEventListener("click", () => {
@@ -1008,6 +1132,7 @@ async function loadAdmin() {
     ]);
     const donation = settings.settings?.donation || {};
     const cost = settings.settings?.cost || {};
+    const ai = settings.settings?.ai || {};
     els.adminPanel.innerHTML = `
       <section class="admin-section">
         <h3>개요</h3>
@@ -1074,6 +1199,11 @@ async function loadAdmin() {
       <section class="admin-section">
         <h3>운영 설정</h3>
         <form class="admin-settings-form" id="adminSettingsForm">
+          <h4>모델 설정</h4>
+          <p class="admin-note">API 키는 환경변수로 관리합니다. OpenAI는 OPENAI_API_KEY, Claude는 ANTHROPIC_API_KEY를 사용합니다.</p>
+          ${modelSettingsFields("chat", "대화 모델", ai.chat || {})}
+          ${modelSettingsFields("feedback", "피드백 모델", ai.feedback || {})}
+          <h4>후원/비용 설정</h4>
           <label class="field"><span>후원 제목</span><input name="title" value="${escapeHtml(donation.title || "후원")}" /></label>
           <label class="field"><span>후원 안내</span><textarea name="body" rows="4">${escapeHtml(donation.body || "")}</textarea></label>
           <label class="field"><span>후원 계좌/링크</span><input name="account" value="${escapeHtml(donation.account || "")}" placeholder="나중에 입력" /></label>
@@ -1093,6 +1223,17 @@ async function loadAdmin() {
 function bindAdminEvents() {
   const form = document.querySelector("#adminSettingsForm");
   if (!form) return;
+  const readModelSettings = (prefix) => ({
+    provider: form.elements[`${prefix}Provider`].value,
+    model: form.elements[`${prefix}Model`].value.trim(),
+    maxOutputTokens: Number(form.elements[`${prefix}MaxOutputTokens`].value || 0),
+    temperature: form.elements[`${prefix}Temperature`].value,
+    topP: form.elements[`${prefix}TopP`].value,
+    reasoningEffort: form.elements[`${prefix}ReasoningEffort`].value,
+    thinkingType: form.elements[`${prefix}ThinkingType`].value,
+    thinkingBudgetTokens: Number(form.elements[`${prefix}ThinkingBudgetTokens`].value || 0),
+    thinkingDisplay: form.elements[`${prefix}ThinkingDisplay`].value
+  });
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const status = document.querySelector("#adminSettingsStatus");
@@ -1113,6 +1254,10 @@ function bindAdminEvents() {
             cost: {
               usdToKrw: Number(form.elements.usdToKrw.value || 1380),
               monthlyBudgetKrw: Number(form.elements.monthlyBudgetKrw.value || 0)
+            },
+            ai: {
+              chat: readModelSettings("chat"),
+              feedback: readModelSettings("feedback")
             }
           }
         })

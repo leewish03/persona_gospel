@@ -731,6 +731,48 @@ textarea:focus {
   font-size: 1rem;
 }
 
+.feedback-content {
+  min-width: 0;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  word-break: keep-all;
+}
+
+.feedback-content p,
+.feedback-content li {
+  color: var(--muted);
+  line-height: 1.62;
+}
+
+.feedback-content p:last-child,
+.feedback-content li:last-child {
+  margin-bottom: 0;
+}
+
+.feedback-content h2 {
+  margin: 18px 0 8px;
+  color: var(--teal-deep);
+  font-size: 1rem;
+}
+
+.feedback-error {
+  display: grid;
+  gap: 10px;
+}
+
+.feedback-error p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.58;
+}
+
+.feedback-error-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 4px;
+}
+
 .share-notice {
   margin: 0 0 12px;
   padding: 10px 12px;
@@ -932,6 +974,12 @@ textarea:focus {
 .history-detail {
   display: grid;
   gap: 12px;
+  padding-bottom: 72px;
+}
+
+.history-detail-card {
+  min-width: 0;
+  overflow: visible;
 }
 
 .transcript {
@@ -1056,6 +1104,42 @@ textarea:focus {
   gap: 12px;
 }
 
+.admin-settings-form h4 {
+  margin: 6px 0 0;
+  color: var(--ink);
+  font-size: 0.95rem;
+}
+
+.admin-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.model-fieldset {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fbf8f2;
+}
+
+.model-fieldset legend {
+  padding: 0 6px;
+  color: var(--teal-deep);
+  font-size: 0.88rem;
+  font-weight: 900;
+}
+
+.model-grid {
+  display: grid;
+  gap: 10px;
+}
+
 .admin-grid article {
   gap: 6px;
 }
@@ -1075,12 +1159,14 @@ textarea:focus {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 58px;
   gap: 7px;
+  align-items: start;
   padding: 7px 8px calc(7px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--line);
   background: rgba(255, 253, 250, 0.96);
 }
 
 .composer textarea {
+  height: 42px;
   min-height: 40px;
   max-height: 88px;
   padding: 9px 10px;
@@ -1090,6 +1176,7 @@ textarea:focus {
 }
 
 .composer .send-button {
+  height: 42px;
   min-height: 40px;
   border-radius: 11px;
   font-size: 0.86rem;
