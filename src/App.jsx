@@ -4,9 +4,12 @@ import {
   BookOpen,
   CheckCircle2,
   ChevronLeft,
+  Copy,
+  Download,
   Home,
   Settings,
-  Shield
+  Shield,
+  Trash2
 } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, XAxis } from "recharts";
 
@@ -218,6 +221,11 @@ function PendingActionDialog({ state, actions }) {
       title: "피드백을 받을까요?",
       description: "피드백을 생성하면 이 훈련 대화가 종료되고 리포트 화면으로 이동합니다.",
       action: "피드백 받기"
+    },
+    historyDelete: {
+      title: "이 훈련 기록을 삭제할까요?",
+      description: "내 기록 목록과 성장 요약에서 숨겨집니다. 관리자는 운영 기록 확인을 위해 계속 볼 수 있습니다.",
+      action: "삭제하기"
     }
   }[pending?.type || "navigation"];
 
@@ -302,8 +310,8 @@ function HomeScreen({ state, actions }) {
       >
         <div>
           <Badge variant="secondary" className="mb-3 bg-white/90 text-stone-900">Mobile Training</Badge>
-          <h2 className="text-[clamp(1.65rem,8vw,2.6rem)] font-black leading-tight">복음을 전하는 대화,<br />먼저 연습하세요</h2>
-          <p className="mt-3 max-w-sm text-sm leading-6 text-white/85">실제 대화 전에 안전하게 연습하고, 끝나면 피드백 리포트를 확인하세요.</p>
+          <h2 className="text-[clamp(1.65rem,8vw,2.6rem)] font-black leading-tight">전도 대화,<br />AI와 먼저 연습해보세요</h2>
+          <p className="mt-3 max-w-sm text-sm leading-6 text-white/85">실제 전도 상황을 AI 페르소나와 연습하고, 대화 후 피드백 리포트로 더 나은 질문과 전달 방식을 점검하세요.</p>
           {state.hasUser ? <p className="mt-3 text-xs font-semibold text-white/70">{state.auth.user.profile?.name || state.auth.user.displayName}님, 이어서 훈련할 수 있습니다.</p> : null}
         </div>
         <Button className="h-12 rounded-full bg-primary text-base font-black shadow-2xl hover:bg-primary/90" onClick={actions.handlePrimaryAction}>
@@ -635,6 +643,7 @@ function HistoryDetailScreen({ state, actions }) {
   const active = item.status !== "finished";
   return (
     <div className="grid gap-4">
+      {state.shareNotice ? <Alert><CheckCircle2 /><AlertTitle>기록</AlertTitle><AlertDescription>{state.shareNotice}</AlertDescription></Alert> : null}
       <Card>
         <CardHeader>
           <CardTitle>{labels.persona}</CardTitle>
@@ -644,7 +653,14 @@ function HistoryDetailScreen({ state, actions }) {
           <p>{labels.relationship} · {labels.setting}</p>
           {item.session?.visibleScene ? <p className="rounded-xl bg-muted p-3 text-sm">{item.session.visibleScene}</p> : null}
           <p><b>훈련 초점</b> {labels.goal}</p>
-          <Button onClick={() => active ? actions.resumeConversation(item) : actions.restoreSession(item.session)}>{active ? "대화 이어가기" : "같은 설정으로 다시 훈련"}</Button>
+          <div className="grid gap-2">
+            <Button onClick={() => active ? actions.resumeConversation(item) : actions.restoreSession(item.session)}>{active ? "대화 이어가기" : "같은 설정으로 다시 훈련"}</Button>
+            <div className="grid grid-cols-3 gap-2">
+              <Button variant="secondary" onClick={actions.saveHistoryDetail}><Download />저장</Button>
+              <Button variant="outline" onClick={actions.copyHistoryDetail}><Copy />복사</Button>
+              <Button variant="destructive" disabled={state.isBusy} onClick={() => actions.requestDeleteHistoryDetail(item.id)}><Trash2 />삭제</Button>
+            </div>
+          </div>
         </CardContent>
       </Card>
       <Card>
@@ -815,6 +831,7 @@ function AdminConversationDrawer({ detail, personas, onClose }) {
             <div className="grid gap-4 pb-6">
               <div className="grid gap-1 text-sm text-muted-foreground">
                 <p><b className="text-foreground">사용자</b> {conv.user?.name || conv.user?.email || "—"}</p>
+                {conv.hiddenByUserAt ? <p><Badge variant="secondary">사용자 숨김</Badge> {formatDate(conv.hiddenByUserAt)}</p> : null}
                 <p>{labels.relationship} · {labels.setting}</p>
                 <p><b className="text-foreground">훈련 초점</b> {labels.goal}</p>
               </div>
@@ -1009,7 +1026,12 @@ function AdminTables({ state, users, conversations, usage, actions }) {
                 key={item.id}
                 title={item.user?.name || item.user?.email || "사용자"}
                 subtitle={`${labels.persona} · ${formatDate(item.createdAt)}`}
-                badge={<Badge variant={item.status === "finished" ? "outline" : "secondary"}>{item.status === "finished" ? "완료" : "진행"}</Badge>}
+                badge={
+                  <span className="flex flex-wrap justify-end gap-1">
+                    <Badge variant={item.status === "finished" ? "outline" : "secondary"}>{item.status === "finished" ? "완료" : "진행"}</Badge>
+                    {item.hiddenByUserAt ? <Badge variant="secondary">사용자 숨김</Badge> : null}
+                  </span>
+                }
                 items={[
                   ["훈련 초점", labels.goal],
                   ["관계/상황", `${labels.relationship} · ${labels.setting}`],

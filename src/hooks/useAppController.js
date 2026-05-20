@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { getJson, postJson, putJson } from "@/lib/api";
+import { deleteJson, getJson, postJson, putJson } from "@/lib/api";
 import { flowScreens, profileDefaults, setupScreens } from "@/lib/constants";
 import { markdownToHtml, sessionLabels } from "@/lib/format";
 
@@ -49,9 +49,49 @@ function userMessageForError(error, context = "general") {
     if (internal) return "관리자 데이터를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.";
     return raw || "관리자 데이터를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.";
   }
+  if (context === "historyDelete") return "기록을 삭제하지 못했습니다. 잠시 후 다시 시도해주세요.";
   if (context === "history" || context === "historyDetail") return raw || "훈련 기록을 불러오지 못했습니다. 잠시 후 다시 시도해주세요.";
   if (internal) return "요청 처리 중 문제가 발생했습니다. 잠시 후 다시 시도해주세요.";
   return raw || "요청 처리 중 오류가 발생했습니다.";
+}
+
+function safeFileSegment(value = "") {
+  return (
+    String(value || "훈련기록")
+      .replace(/[\\/:*?"<>|]/g, "-")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 40) || "훈련기록"
+  );
+}
+
+function conversationExportText(conversation = {}, personas = []) {
+  const labels = sessionLabels(conversation.session || {}, personas);
+  const status = conversation.status === "finished" ? "완료" : "진행 중";
+  const lines = [
+    "복음 대화 훈련소 훈련기록",
+    "",
+    `페르소나: ${labels.persona}`,
+    `생성일: ${new Date(conversation.createdAt || Date.now()).toLocaleString("ko-KR")}`,
+    `상태: ${status}`,
+    `관계: ${labels.relationship}`,
+    `상황: ${labels.setting}`,
+    `훈련 초점: ${labels.goal}`,
+    "",
+    "대화 전문"
+  ];
+  for (const message of conversation.messages || []) {
+    const speaker = message.role === "user" ? "나" : labels.persona;
+    lines.push("", `[${speaker}]`, message.content || "");
+  }
+  lines.push("", "피드백 리포트", conversation.feedbackText || "아직 피드백이 없습니다.");
+  return lines.join("\n");
+}
+
+function conversationExportFilename(conversation = {}, personas = []) {
+  const labels = sessionLabels(conversation.session || {}, personas);
+  const date = new Date(conversation.createdAt || Date.now()).toISOString().slice(0, 10);
+  return `훈련기록-${safeFileSegment(labels.persona)}-${date}.txt`;
 }
 
 export function useAppController() {
@@ -204,6 +244,61 @@ export function useAppController() {
       setHistory((value) => ({ ...value, loading: false }));
     }
   }, []);
+
+  const saveHistoryDetail = useCallback(() => {
+    const detail = history.detail;
+    if (!detail) return;
+    const text = conversationExportText(detail, personas);
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = conversationExportFilename(detail, personas);
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+    setShareNotice("훈련 기록 파일을 저장했습니다.");
+  }, [history.detail, personas]);
+
+  const copyHistoryDetail = useCallback(async () => {
+    const detail = history.detail;
+    if (!detail) return;
+    try {
+      await navigator.clipboard.writeText(conversationExportText(detail, personas));
+      setShareNotice("훈련 기록을 클립보드에 복사했습니다.");
+    } catch {
+      setShareNotice("복사하지 못했습니다. 브라우저 권한을 확인한 뒤 다시 시도해주세요.");
+    }
+  }, [history.detail, personas]);
+
+  const requestDeleteHistoryDetail = useCallback((id) => {
+    if (!id) return;
+    setPendingDialog({ type: "historyDelete", id });
+  }, []);
+
+  const deleteHistoryDetailConfirmed = useCallback(async (id) => {
+    if (!id) return;
+    setIsBusy(true);
+    try {
+      await deleteJson(`/api/conversations/${encodeURIComponent(id)}`);
+      setPendingDialog(null);
+      setHistory((value) => ({
+        ...value,
+        detail: null,
+        items: value.items.filter((item) => item.id !== id),
+        loading: false
+      }));
+      await loadHistory();
+      setShareNotice("훈련 기록을 삭제했습니다.");
+      goTo("history", { confirmed: true });
+    } catch (error) {
+      setPendingDialog(null);
+      setErrors((value) => ({ ...value, global: userMessageForError(error, "historyDelete") }));
+    } finally {
+      setIsBusy(false);
+    }
+  }, [goTo, loadHistory]);
 
   const loadAdmin = useCallback(async (filters = admin.filters) => {
     if (!isAdmin) return;
@@ -534,8 +629,12 @@ export function useAppController() {
     }
     if (pending.type === "feedback") {
       await finishSessionConfirmed();
+      return;
     }
-  }, [finishSessionConfirmed, goTo, pendingDialog, resetAllConfirmed]);
+    if (pending.type === "historyDelete") {
+      await deleteHistoryDetailConfirmed(pending.id);
+    }
+  }, [deleteHistoryDetailConfirmed, finishSessionConfirmed, goTo, pendingDialog, resetAllConfirmed]);
 
   const restoreSession = useCallback((session = {}) => {
     setSelectedPersonaId(session.personaId || selectedPersonaId);
@@ -710,6 +809,9 @@ export function useAppController() {
       continueHistoryConversation,
       loadHistory,
       loadHistoryDetail,
+      saveHistoryDetail,
+      copyHistoryDetail,
+      requestDeleteHistoryDetail,
       loadAdmin,
       loadAdminConversationDetail,
       closeAdminConversationDetail,

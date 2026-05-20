@@ -451,7 +451,8 @@ function supabaseConversationToApp(row, messages = []) {
     status: row.status || "active",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    finishedAt: row.finished_at || ""
+    finishedAt: row.finished_at || "",
+    hiddenByUserAt: row.hidden_by_user_at || ""
   };
 }
 
@@ -471,7 +472,8 @@ function appConversationToSupabase(conversation) {
     assistant_message_count: (conversation.messages || []).filter((message) => message.role === "assistant").length,
     created_at: conversation.createdAt,
     updated_at: conversation.updatedAt,
-    finished_at: conversation.finishedAt || null
+    finished_at: conversation.finishedAt || null,
+    hidden_by_user_at: conversation.hiddenByUserAt || null
   };
 }
 
@@ -897,7 +899,7 @@ function createConversation({ userId, session, messages = [], status = "active" 
 }
 
 function findConversationForUser(user, id) {
-  return db.conversations.find((conversation) => conversation.id === id && conversation.userId === user.id);
+  return db.conversations.find((conversation) => conversation.id === id && conversation.userId === user.id && !conversation.hiddenByUserAt);
 }
 
 function requireAdmin(req, res) {
@@ -918,7 +920,7 @@ function publicServerError(error) {
   };
 }
 
-function publicConversation(conversation, { includeMessages = false, includeFeedback = false } = {}) {
+function publicConversation(conversation, { includeMessages = false, includeFeedback = false, includeHidden = false } = {}) {
   const payload = {
     id: conversation.id,
     session: conversation.session,
@@ -934,6 +936,7 @@ function publicConversation(conversation, { includeMessages = false, includeFeed
     updatedAt: conversation.updatedAt,
     finishedAt: conversation.finishedAt
   };
+  if (includeHidden) payload.hiddenByUserAt = conversation.hiddenByUserAt || "";
   if (includeMessages) payload.messages = conversation.messages || [];
   if (includeFeedback) payload.feedbackText = conversation.feedbackText || "";
   return payload;
@@ -2835,7 +2838,11 @@ async function handleAppApi(req, res, url) {
   if (path === "/api/conversations" && req.method === "GET") {
     const user = requireUser(req, res);
     if (!user) return true;
-    const filtered = filterConversations(db.conversations, url.searchParams, { userId: user.id });
+    const filtered = filterConversations(
+      db.conversations.filter((conversation) => !conversation.hiddenByUserAt),
+      url.searchParams,
+      { userId: user.id }
+    );
     const page = paginate(filtered, url.searchParams);
     json(res, 200, {
       conversations: page.items.map((conversation) => publicConversation(conversation)),
@@ -2857,10 +2864,26 @@ async function handleAppApi(req, res, url) {
     return true;
   }
 
+  if (conversationDetailMatch && req.method === "DELETE") {
+    const user = requireUser(req, res);
+    if (!user) return true;
+    const conversation = findConversationForUser(user, decodeURIComponent(conversationDetailMatch[1]));
+    if (!conversation) {
+      json(res, 404, { error: "훈련 기록을 찾지 못했습니다." });
+      return true;
+    }
+    const now = new Date().toISOString();
+    conversation.hiddenByUserAt = now;
+    conversation.updatedAt = now;
+    await saveDb();
+    json(res, 200, { ok: true });
+    return true;
+  }
+
   if (path === "/api/me/stats" && req.method === "GET") {
     const user = requireUser(req, res);
     if (!user) return true;
-    const conversations = db.conversations.filter((conversation) => conversation.userId === user.id);
+    const conversations = db.conversations.filter((conversation) => conversation.userId === user.id && !conversation.hiddenByUserAt);
     const finished = conversations.filter((conversation) => conversation.status === "finished");
     const countBy = (key) =>
       Object.entries(
@@ -2969,7 +2992,7 @@ async function handleAppApi(req, res, url) {
       conversations: page.items.map((conversation) => {
         const owner = db.users.find((item) => item.id === conversation.userId);
         return {
-          ...publicConversation(conversation),
+          ...publicConversation(conversation, { includeHidden: true }),
           user: {
             id: owner?.id || "",
             email: owner?.email || "",
@@ -3106,7 +3129,7 @@ async function handleAppApi(req, res, url) {
     const owner = db.users.find((item) => item.id === conversation.userId);
     json(res, 200, {
       conversation: {
-        ...publicConversation(conversation, { includeMessages: true, includeFeedback: true }),
+        ...publicConversation(conversation, { includeMessages: true, includeFeedback: true, includeHidden: true }),
         user: owner
           ? { id: owner.id, email: owner.email || "", name: owner.profile?.name || owner.displayName || "" }
           : null
@@ -3120,7 +3143,7 @@ async function handleAppApi(req, res, url) {
     if (!user) return true;
     json(res, 200, {
       users: db.users.map(publicUser),
-      conversations: db.conversations.map((conversation) => publicConversation(conversation)),
+      conversations: db.conversations.map((conversation) => publicConversation(conversation, { includeHidden: true })),
       usage: usageSummary(),
       settings: db.settings
     });
