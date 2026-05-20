@@ -39,11 +39,15 @@ const storageDir = globalThis.process?.env?.STORAGE_DIR || join(rootDir, "storag
 const dbPath = join(storageDir, "db.json");
 const supabaseUrl = String(globalThis.process?.env?.SUPABASE_URL || "").replace(/\/+$/, "");
 const supabaseServiceRoleKey = globalThis.process?.env?.SUPABASE_SERVICE_ROLE_KEY || "";
-const usdToKrw = Number(globalThis.process?.env?.USD_TO_KRW || 1380);
-const chatInputPrice = Number(globalThis.process?.env?.OPENAI_CHAT_INPUT_USD_PER_1M || 0.15);
-const chatOutputPrice = Number(globalThis.process?.env?.OPENAI_CHAT_OUTPUT_USD_PER_1M || 0.6);
-const feedbackInputPrice = Number(globalThis.process?.env?.OPENAI_FEEDBACK_INPUT_USD_PER_1M || 2);
-const feedbackOutputPrice = Number(globalThis.process?.env?.OPENAI_FEEDBACK_OUTPUT_USD_PER_1M || 8);
+const usdToKrw = Number(globalThis.process?.env?.USD_TO_KRW || 1480);
+const exchangeRateApiUrl =
+  globalThis.process?.env?.EXCHANGE_RATE_API_URL || "https://api.frankfurter.dev/v1/latest?base=USD&symbols=KRW";
+const exchangeRateRefreshMs = Number(globalThis.process?.env?.EXCHANGE_RATE_REFRESH_MS || 6 * 60 * 60 * 1000);
+const exchangeRateTimeoutMs = Number(globalThis.process?.env?.EXCHANGE_RATE_TIMEOUT_MS || 4000);
+const chatInputPrice = Number(globalThis.process?.env?.OPENAI_CHAT_INPUT_USD_PER_1M || 0.75);
+const chatOutputPrice = Number(globalThis.process?.env?.OPENAI_CHAT_OUTPUT_USD_PER_1M || 4.5);
+const feedbackInputPrice = Number(globalThis.process?.env?.OPENAI_FEEDBACK_INPUT_USD_PER_1M || 2.5);
+const feedbackOutputPrice = Number(globalThis.process?.env?.OPENAI_FEEDBACK_OUTPUT_USD_PER_1M || 15);
 /** Anthropic USD per 1M tokens (docs.claude.com pricing, 2026-05 기준 대표값; 환경변수로 덮어쓰기) */
 const anthropicChatSonnetInput = Number(globalThis.process?.env?.ANTHROPIC_CHAT_SONNET_INPUT_USD_PER_1M || 3);
 const anthropicChatSonnetOutput = Number(globalThis.process?.env?.ANTHROPIC_CHAT_SONNET_OUTPUT_USD_PER_1M || 15);
@@ -60,6 +64,14 @@ const anthropicFeedbackHaikuOutput = Number(globalThis.process?.env?.ANTHROPIC_F
 const sessions = new Map();
 const oauthStates = new Map();
 const openingLineJobs = new Map();
+let exchangeRateState = {
+  usdToKrw,
+  source: "fallback",
+  provider: "env",
+  fetchedAt: "",
+  date: "",
+  error: ""
+};
 
 function loadLocalEnv(path) {
   if (globalThis.process?.env?.NODE_ENV === "production" || !existsSync(path)) return;
@@ -133,6 +145,14 @@ const defaultSettings = {
 };
 
 const db = await loadDb();
+initializeExchangeRateState();
+await refreshUsdToKrw({ force: true, persist: true });
+const exchangeRateTimer = setInterval(() => {
+  refreshUsdToKrw({ persist: true }).catch((error) => {
+    console.error("Exchange rate refresh failed.", error);
+  });
+}, exchangeRateRefreshMs);
+exchangeRateTimer.unref?.();
 
 function emptyDb() {
   return {
@@ -236,6 +256,7 @@ function sanitizeModelSettings(input = {}, fallback = {}) {
 
 function sanitizeSettings(input = {}) {
   const merged = mergeSettings(defaultSettings, input);
+  const exchangeRate = merged.cost.exchangeRate || {};
   return {
     donation: {
       title: String(merged.donation.title || "후원"),
@@ -245,7 +266,15 @@ function sanitizeSettings(input = {}) {
     },
     cost: {
       usdToKrw: Number(merged.cost.usdToKrw || usdToKrw),
-      monthlyBudgetKrw: Number(merged.cost.monthlyBudgetKrw || 0)
+      monthlyBudgetKrw: Number(merged.cost.monthlyBudgetKrw || 0),
+      exchangeRate: {
+        source: String(exchangeRate.source || ""),
+        provider: String(exchangeRate.provider || ""),
+        url: String(exchangeRate.url || ""),
+        date: String(exchangeRate.date || ""),
+        fetchedAt: String(exchangeRate.fetchedAt || ""),
+        error: String(exchangeRate.error || "")
+      }
     },
     ai: {
       chat: sanitizeModelSettings(merged.ai.chat, defaultSettings.ai.chat),
@@ -258,6 +287,99 @@ function sanitizeSettings(input = {}) {
 function sanitizeOpeningLinesSettings(input = {}) {
   const latest = input?.latest && typeof input.latest === "object" ? input.latest : null;
   return { latest: latest ? publicOpeningLineResult(latest) : null };
+}
+
+function initializeExchangeRateState() {
+  const cost = db.settings?.cost || {};
+  const meta = cost.exchangeRate || {};
+  const storedRate = Number(cost.usdToKrw || usdToKrw);
+  exchangeRateState = {
+    usdToKrw: Number.isFinite(storedRate) && storedRate > 0 ? storedRate : usdToKrw,
+    source: meta.source || "stored",
+    provider: meta.provider || "settings",
+    url: meta.url || "",
+    fetchedAt: meta.fetchedAt || "",
+    date: meta.date || "",
+    error: meta.error || ""
+  };
+}
+
+function currentUsdToKrw() {
+  const liveRate = Number(exchangeRateState.usdToKrw || 0);
+  if (Number.isFinite(liveRate) && liveRate > 0) return liveRate;
+  const settingsRate = Number(db.settings?.cost?.usdToKrw || 0);
+  if (Number.isFinite(settingsRate) && settingsRate > 0) return settingsRate;
+  return usdToKrw;
+}
+
+function parseUsdToKrwRate(data) {
+  const candidates = [
+    data?.rates?.KRW,
+    data?.conversion_rates?.KRW,
+    data?.rate,
+    data?.result,
+    Array.isArray(data) ? data.find((item) => item?.quote === "KRW")?.rate : undefined
+  ];
+  const rate = Number(candidates.find((value) => Number.isFinite(Number(value))));
+  if (!Number.isFinite(rate) || rate < 500 || rate > 2500) {
+    throw new Error("USD/KRW 환율 응답을 해석하지 못했습니다.");
+  }
+  return rate;
+}
+
+function exchangeRateDateFrom(data) {
+  if (typeof data?.date === "string") return data.date;
+  if (Array.isArray(data)) {
+    const row = data.find((item) => item?.quote === "KRW") || data[0];
+    if (typeof row?.date === "string") return row.date;
+  }
+  return "";
+}
+
+async function refreshUsdToKrw({ force = false, persist = false } = {}) {
+  const fetchedAt = exchangeRateState.fetchedAt ? Date.parse(exchangeRateState.fetchedAt) : 0;
+  if (!force && fetchedAt && Date.now() - fetchedAt < exchangeRateRefreshMs) return exchangeRateState;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), exchangeRateTimeoutMs);
+  try {
+    const response = await fetch(exchangeRateApiUrl, { signal: controller.signal });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(`환율 API 요청 실패: ${response.status}`);
+
+    const rate = Number(parseUsdToKrwRate(data).toFixed(2));
+    const nextState = {
+      usdToKrw: rate,
+      source: "api",
+      provider: "frankfurter",
+      url: exchangeRateApiUrl,
+      fetchedAt: new Date().toISOString(),
+      date: exchangeRateDateFrom(data),
+      error: ""
+    };
+    exchangeRateState = nextState;
+    db.settings = mergeSettings(db.settings, {
+      cost: {
+        usdToKrw: rate,
+        exchangeRate: nextState
+      }
+    });
+    if (persist) await saveDb();
+    return nextState;
+  } catch (error) {
+    const message = error?.name === "AbortError" ? "환율 API 요청 시간 초과" : error?.message || "환율 API 요청 실패";
+    exchangeRateState = { ...exchangeRateState, error: message };
+    db.settings = mergeSettings(db.settings, {
+      cost: {
+        usdToKrw: currentUsdToKrw(),
+        exchangeRate: { ...exchangeRateState, error: message }
+      }
+    });
+    if (persist) await saveDb();
+    return exchangeRateState;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function supabaseRequest(path, { method = "GET", body } = {}) {
@@ -872,6 +994,7 @@ function userActivityStats(userId) {
 function usageSummary(events = db.usageEvents) {
   const monthly = events.filter((event) => isSameMonth(event.createdAt));
   const sum = (items, key) => items.reduce((total, item) => total + Number(item[key] || 0), 0);
+  const monthlyCostUsd = Number(sum(monthly, "estimatedCostUsd").toFixed(6));
   const byType = Object.fromEntries(
     ["chat_start", "chat_message", "feedback", "opening_line_generation"].map((type) => [
       type,
@@ -883,8 +1006,8 @@ function usageSummary(events = db.usageEvents) {
     monthlyEvents: monthly.length,
     monthlyInputTokens: sum(monthly, "inputTokens"),
     monthlyOutputTokens: sum(monthly, "outputTokens"),
-    estimatedMonthlyCostUsd: Number(sum(monthly, "estimatedCostUsd").toFixed(6)),
-    estimatedMonthlyCostKrw: Number(sum(monthly, "estimatedCostKrw").toFixed(2)),
+    estimatedMonthlyCostUsd: monthlyCostUsd,
+    estimatedMonthlyCostKrw: Number((monthlyCostUsd * currentUsdToKrw()).toFixed(2)),
     byType
   };
 }
@@ -924,8 +1047,8 @@ function usageBreakdowns(events = []) {
     target.events += 1;
     target.inputTokens += Number(event.inputTokens || 0);
     target.outputTokens += Number(event.outputTokens || 0);
-    target.estimatedCostKrw += Number(event.estimatedCostKrw || 0);
     target.estimatedCostUsd += Number(event.estimatedCostUsd || 0);
+    target.estimatedCostKrw += Number(event.estimatedCostUsd || 0) * currentUsdToKrw();
   };
   for (const event of events) {
     const day = String(event.createdAt || "").slice(0, 10) || "unknown";
@@ -1015,6 +1138,23 @@ function anthropicPricePerMtok(model = "", modelType = "chat") {
   return { inputPrice: sonnetIn, outputPrice: sonnetOut };
 }
 
+function openAiPricePerMtok(model = "", modelType = "chat") {
+  const id = String(model || "").toLowerCase();
+  if (id.includes("gpt-5.5-pro")) return { inputPrice: 30, outputPrice: 180 };
+  if (id.includes("gpt-5.5")) return { inputPrice: 5, outputPrice: 30 };
+  if (id.includes("gpt-5.4-pro")) return { inputPrice: 30, outputPrice: 180 };
+  if (id.includes("gpt-5.4-mini")) return { inputPrice: 0.75, outputPrice: 4.5 };
+  if (id.includes("gpt-5.4-nano")) return { inputPrice: 0.2, outputPrice: 1.25 };
+  if (id.includes("gpt-5.4")) return { inputPrice: 2.5, outputPrice: 15 };
+  if (id.includes("gpt-5.3-codex")) return { inputPrice: 1.75, outputPrice: 14 };
+  if (id.includes("gpt-5.2-pro")) return { inputPrice: 21, outputPrice: 168 };
+  if (id.includes("gpt-5.2")) return { inputPrice: 1.75, outputPrice: 14 };
+  return {
+    inputPrice: modelType === "feedback" ? feedbackInputPrice : chatInputPrice,
+    outputPrice: modelType === "feedback" ? feedbackOutputPrice : chatOutputPrice
+  };
+}
+
 function estimateCost({ provider = "openai", model = "", modelType, inputTokens, outputTokens }) {
   let inputPrice;
   let outputPrice;
@@ -1023,13 +1163,14 @@ function estimateCost({ provider = "openai", model = "", modelType, inputTokens,
     inputPrice = tier.inputPrice;
     outputPrice = tier.outputPrice;
   } else {
-    inputPrice = modelType === "feedback" ? feedbackInputPrice : chatInputPrice;
-    outputPrice = modelType === "feedback" ? feedbackOutputPrice : chatOutputPrice;
+    const tier = openAiPricePerMtok(model, modelType);
+    inputPrice = tier.inputPrice;
+    outputPrice = tier.outputPrice;
   }
   const estimatedCostUsd = (Number(inputTokens || 0) / 1_000_000) * inputPrice + (Number(outputTokens || 0) / 1_000_000) * outputPrice;
   return {
     estimatedCostUsd: Number(estimatedCostUsd.toFixed(6)),
-    estimatedCostKrw: Number((estimatedCostUsd * (db.settings?.cost?.usdToKrw || usdToKrw)).toFixed(2))
+    estimatedCostKrw: Number((estimatedCostUsd * currentUsdToKrw()).toFixed(2))
   };
 }
 
@@ -2644,6 +2785,14 @@ async function handleAppApi(req, res, url) {
     const user = requireAdmin(req, res);
     if (!user) return true;
     json(res, 200, { settings: db.settings });
+    return true;
+  }
+
+  if (path === "/api/admin/exchange-rate" && req.method === "POST") {
+    const user = requireAdmin(req, res);
+    if (!user) return true;
+    const exchangeRate = await refreshUsdToKrw({ force: true, persist: true });
+    json(res, 200, { exchangeRate, settings: db.settings });
     return true;
   }
 

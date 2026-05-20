@@ -709,6 +709,8 @@ function AdminScreen({ state, actions }) {
   if (!data) return <EmptyCard text="관리자 데이터를 불러오는 중입니다." />;
   const { summary, users, conversations, usage, settings, openingLines } = data;
   const cost = settings.settings?.cost || {};
+  const exchangeRate = cost.exchangeRate || {};
+  const usdToKrw = Number(cost.usdToKrw || 0);
   const monthlyCost = Number(summary.estimatedMonthlyCostKrw || 0);
   const monthlyBudget = Number(cost.monthlyBudgetKrw || 0);
   const budgetRate = monthlyBudget ? percentOf(monthlyCost, monthlyBudget) : 0;
@@ -739,6 +741,11 @@ function AdminScreen({ state, actions }) {
             이번 달 생성형 호출은 약 <strong className="text-foreground">{formatCount(summary.monthlyEvents ?? 0)}</strong>건
             {` (채팅 시작 ${formatCount(byType.chat_start || 0)} · 메시지 ${formatCount(byType.chat_message || 0)} · 피드백 ${formatCount(byType.feedback || 0)})`}
             입니다.
+          </p>
+          <p>
+            비용 환산 환율은 <strong className="text-foreground">1 USD = {usdToKrw ? usdToKrw.toLocaleString("ko-KR") : "-"} KRW</strong>
+            {exchangeRate.fetchedAt ? <>이며, {formatDate(exchangeRate.fetchedAt)}에 갱신됐습니다.</> : <>입니다.</>}
+            {exchangeRate.error ? <> 최근 자동 갱신 오류: {exchangeRate.error}</> : null}
           </p>
           <p>
             가입자 <strong className="text-foreground">{formatCount(summary.users)}</strong>명 · 누적 훈련{" "}
