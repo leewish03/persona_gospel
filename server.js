@@ -1116,10 +1116,14 @@ function extractAnthropicText(response) {
 function normalizeAnthropicUsage(usage = {}) {
   const inputTokens = Number(usage.input_tokens || 0);
   const outputTokens = Number(usage.output_tokens || 0);
+  const cacheCreationInputTokens = Number(usage.cache_creation_input_tokens || 0);
+  const cacheReadInputTokens = Number(usage.cache_read_input_tokens || 0);
   const reasoningTokens = Number(usage.output_tokens_details?.reasoning_tokens || usage.reasoning_tokens || 0);
   return {
     inputTokens,
     outputTokens,
+    cacheCreationInputTokens,
+    cacheReadInputTokens,
     reasoningTokens
   };
 }
@@ -1155,19 +1159,34 @@ function openAiPricePerMtok(model = "", modelType = "chat") {
   };
 }
 
-function estimateCost({ provider = "openai", model = "", modelType, inputTokens, outputTokens }) {
+function estimateCost({
+  provider = "openai",
+  model = "",
+  modelType,
+  inputTokens,
+  outputTokens,
+  cacheCreationInputTokens = 0,
+  cacheReadInputTokens = 0
+}) {
   let inputPrice;
   let outputPrice;
+  let estimatedCostUsd;
   if (provider === "anthropic") {
     const tier = anthropicPricePerMtok(model, modelType);
     inputPrice = tier.inputPrice;
     outputPrice = tier.outputPrice;
+    const regularInputTokens = Number(inputTokens || 0);
+    estimatedCostUsd =
+      (regularInputTokens / 1_000_000) * inputPrice +
+      (Number(cacheCreationInputTokens || 0) / 1_000_000) * inputPrice * 1.25 +
+      (Number(cacheReadInputTokens || 0) / 1_000_000) * inputPrice * 0.1 +
+      (Number(outputTokens || 0) / 1_000_000) * outputPrice;
   } else {
     const tier = openAiPricePerMtok(model, modelType);
     inputPrice = tier.inputPrice;
     outputPrice = tier.outputPrice;
+    estimatedCostUsd = (Number(inputTokens || 0) / 1_000_000) * inputPrice + (Number(outputTokens || 0) / 1_000_000) * outputPrice;
   }
-  const estimatedCostUsd = (Number(inputTokens || 0) / 1_000_000) * inputPrice + (Number(outputTokens || 0) / 1_000_000) * outputPrice;
   return {
     estimatedCostUsd: Number(estimatedCostUsd.toFixed(6)),
     estimatedCostKrw: Number((estimatedCostUsd * currentUsdToKrw()).toFixed(2))
@@ -1188,7 +1207,15 @@ function assertProviderKey(provider) {
   return appOpenAIKey;
 }
 
-async function callModelWithUsage({ modelType, instructions, input, overrides = {} }) {
+async function callModelWithUsage({
+  modelType,
+  instructions,
+  input,
+  staticSystemBlocks = [],
+  dynamicInput = "",
+  cacheStaticSystem = false,
+  overrides = {}
+}) {
   const settings = { ...modelSettingsFor(modelType), ...overrides };
   const apiKey = assertProviderKey(settings.provider);
   if (settings.provider === "anthropic") {
@@ -1196,7 +1223,9 @@ async function callModelWithUsage({ modelType, instructions, input, overrides = 
       apiKey,
       model: settings.model,
       instructions,
-      input,
+      input: dynamicInput || input,
+      staticSystemBlocks,
+      cacheStaticSystem,
       maxOutputTokens: settings.maxOutputTokens,
       temperature: settings.temperature,
       topP: settings.topP,
@@ -1210,7 +1239,7 @@ async function callModelWithUsage({ modelType, instructions, input, overrides = 
     apiKey,
     model: settings.model,
     instructions,
-    input,
+    input: input || [...staticSystemBlocks, dynamicInput].filter(Boolean).join("\n\n"),
     maxOutputTokens: settings.maxOutputTokens,
     reasoningEffort: settings.reasoningEffort,
     temperature: settings.temperature,
@@ -1224,6 +1253,8 @@ async function callOpenAIWithUsage({
   model,
   instructions,
   input,
+  staticSystemBlocks = [],
+  cacheStaticSystem = false,
   maxOutputTokens = 900,
   reasoningEffort = "",
   temperature = "",
@@ -1299,13 +1330,29 @@ async function callAnthropicWithUsage({
     maxTokens = Math.min(64000, budget + 2048);
   }
 
+  const systemBlocks = () => {
+    const rawBlocks = [
+      instructions,
+      ...staticSystemBlocks
+    ].filter((block) => String(block || "").trim());
+    if (!rawBlocks.length) return undefined;
+    return rawBlocks.map((block, index) => {
+      const payload = { type: "text", text: String(block) };
+      if (cacheStaticSystem && index === rawBlocks.length - 1) {
+        payload.cache_control = { type: "ephemeral", ttl: "5m" };
+      }
+      return payload;
+    });
+  };
+
   const buildPayload = ({ includeThinking = true, tokenLimit = maxTokens } = {}) => {
+    const system = systemBlocks();
     const payload = {
       model,
       max_tokens: tokenLimit,
-      system: instructions,
       messages: [{ role: "user", content: input }]
     };
+    if (system) payload.system = system;
     if (temperature !== "") payload.temperature = Number(temperature);
     if (topP !== "") payload.top_p = Number(topP);
 
@@ -1324,6 +1371,7 @@ async function callAnthropicWithUsage({
       headers: {
         "Content-Type": "application/json",
         "anthropic-version": "2023-06-01",
+        ...(cacheStaticSystem ? { "anthropic-beta": "extended-cache-ttl-2025-04-11" } : {}),
         "x-api-key": apiKey
       },
       body: JSON.stringify(payload)
@@ -1371,6 +1419,8 @@ function estimateUsage(input, output, usage = {}) {
   return {
     inputTokens: usage.inputTokens || estimateTokens(input),
     outputTokens: usage.outputTokens || estimateTokens(output),
+    cacheCreationInputTokens: usage.cacheCreationInputTokens || 0,
+    cacheReadInputTokens: usage.cacheReadInputTokens || 0,
     reasoningTokens: usage.reasoningTokens || 0
   };
 }
@@ -1606,12 +1656,17 @@ function formatPasEntry(entry, index) {
 function formatPasExecutionPlan(persona, messages = []) {
   const detected = detectUserMove(lastUserMessage(messages) || {});
   const candidates = selectPasEntries(persona, detected, 3);
+  const [selected, ...fallbacks] = candidates;
   return [
     "이번 턴 페르소나 실행 계획:",
     `- 감지된 사용자 행동: ${detected.userMove}`,
     `- 감지 근거: ${detected.evidence.join(", ") || "없음"}`,
-    "- 우선 참고할 PAS 후보:",
-    candidates.length ? candidates.map(formatPasEntry).join("\n") : "  없음",
+    "- 선택 PAS:",
+    selected ? formatPasEntry(selected, 1) : "  없음",
+    "- 예비 PAS:",
+    fallbacks.length
+      ? fallbacks.slice(0, 2).map((entry) => `  - ${entry.id || "pas"} / ${entry.userMove || "unknown"} / ${entry.purpose || "없음"}`).join("\n")
+      : "  없음",
     "- 주의: 위 후보가 대화 기록과 맞지 않으면 더 자연스러운 PAS를 내부적으로 선택하되, 페르소나 장벽은 유지한다."
   ].join("\n");
 }
@@ -1789,6 +1844,50 @@ function formatRuntimeCard(persona) {
   return lines.join("\n");
 }
 
+function takeList(items = [], count = 3) {
+  return Array.isArray(items) ? items.slice(0, count) : [];
+}
+
+function compactList(label, items = []) {
+  const list = Array.isArray(items) ? items.filter(Boolean) : [];
+  return `${label}: ${list.length ? list.map((item) => `- ${item}`).join("\n") : "없음"}`;
+}
+
+function formatCompactPersonaCard(persona) {
+  const template = persona.roleplayTemplate || {};
+  const lines = [
+    "페르소나 핵심 카드:",
+    `- 이름/나이/성별: ${persona.name} / ${persona.age || "나이 미상"} / ${persona.gender || "성별 미상"}`,
+    `- 제목: ${persona.title || "없음"}`,
+    `- 설명: ${persona.shortDescription || "없음"}`,
+    `- 배경: ${persona.background || "없음"}`,
+    compactList("내면 갈등", takeList(persona.innerConflicts, 3)),
+    compactList("복음 장벽", takeList(persona.gospelBarriers, 3)),
+    compactList("대화 규칙", persona.conversationRules || []),
+    "",
+    "실행 구조:",
+    `- 핵심 성향: ${template.coreStack?.coreTrait || "없음"}`,
+    `- 표현 방식: ${template.coreStack?.modifier || template.speechStyle?.tone || "없음"}`,
+    `- 인간적 불완전성: ${template.coreStack?.humanFlaw || "없음"}`,
+    `- 대화 흐름: 초반=${template.sessionArc?.opening || "없음"} / 중반=${template.sessionArc?.middle || "없음"} / 마무리=${template.sessionArc?.closing || "없음"}`,
+    `- 말투: ${template.speechStyle?.tone || "없음"} / ${template.speechStyle?.sentenceShape || "없음"}`,
+    compactList("허용된 불완전성", template.imperfectionPattern || []),
+    compactList("피해야 할 실패 패턴", template.badResponsePatterns || []),
+    "",
+    "복음 반응 지도:",
+    ...(template.gospelReactionMap
+      ? Object.entries(template.gospelReactionMap).map(([key, value]) => `- ${key}: ${value}`)
+      : ["- 없음"]),
+    "",
+    "후반 장벽:",
+    `- 핵심 질문: ${template.lateSessionTension?.coreQuestion || "없음"}`,
+    `- 건강한 변화: ${template.lateSessionTension?.healthyMovement || "없음"}`,
+    `- 해결 금지: ${template.lateSessionTension?.doNotResolve || "없음"}`,
+    compactList("단기 세션 한계", template.shortSessionBoundaries || [])
+  ];
+  return lines.join("\n");
+}
+
 function formatPersonaCard(persona) {
   const { roleplayTemplate, ...personaCard } = persona;
   return JSON.stringify(personaCard, null, 2);
@@ -1842,13 +1941,55 @@ function buildFeedbackSessionBlock(session, persona) {
   ].join("\n");
 }
 
-function initialPromptFor(session, persona) {
+function stableGoalPolicyFor(session = {}) {
+  const goal = session.goal || "listen_and_understand";
+  const policy = goalPolicies[goal];
   return [
-    buildSessionBlock(session, persona),
+    "훈련 초점 운영 정책:",
+    `- 선택 초점: ${goalLabels[goal] || goal}`,
+    `- 연습 기회: ${policy?.opportunity || "사용자가 선택한 목표를 연습할 수 있는 자연스러운 상대 반응"}`,
+    `- 잘 맞게 접근하면: ${policy?.goodResponse || "조금 더 열리되 바로 결론 내리지 않는다."}`,
+    `- 서두르거나 빗나가면: ${policy?.resistance || "부담, 혼란, 거리감을 자연스럽게 표현한다."}`,
+    `- 과유도 금지: ${policy?.avoid || "사용자를 평가하거나 코칭하지 않는다."}`
+  ].join("\n");
+}
+
+function staticRoleplayPromptFor(session, persona) {
+  return [
+    guardrailPrompt,
     "",
-    formatRuntimeCard(persona),
+    "단회성 훈련 운영 원칙:",
+    "- 이 세션은 10~30분 안에 끝나는 복음 대화 연습이다.",
+    "- 며칠에 걸친 장기 관계나 과도한 친밀감 변화를 만들지 않는다.",
+    "- 한 번의 대화 안에서만 신뢰, 방어감, 궁금증이 조금씩 움직인다.",
+    "- 사용자가 잘 들으면 페르소나는 한 단계 더 솔직해지고, 압박하면 한 단계 방어적으로 변한다.",
+    "- 신뢰가 쌓여도 페르소나의 핵심 복음 장벽은 사라지지 않고 더 정확한 질문이나 망설임으로 드러난다.",
+    "- 대화가 길어지면 lateSessionTension을 참고해 억지 결론보다 다음 질문이나 다음 대화 여지를 남긴다.",
     "",
-    goalPressureFor(session, [], persona),
+    "현재 세션 설정:",
+    `- 페르소나: ${persona.name} (${persona.title})`,
+    `- 관계: ${relationshipLabels[session.relationship] || session.relationship}`,
+    `  관계 반영 지침: ${relationshipGuidance[session.relationship] || "관계 거리감을 자연스럽게 반영한다."}`,
+    `- 시작 상황: ${settingLabels[session.setting] || session.setting}`,
+    `  상황 반영 지침: ${settingGuidance[session.setting] || "장소와 상황 단서를 자연스럽게 반영한다."}`,
+    `- 훈련 초점: ${goalLabels[session.goal] || session.goal}`,
+    "",
+    formatCompactPersonaCard(persona),
+    "",
+    stableGoalPolicyFor(session)
+  ].join("\n");
+}
+
+function goalTurnPressureFor(session = {}, messages = [], persona = {}) {
+  const full = goalPressureFor(session, messages, persona).split("\n");
+  return full
+    .filter((line) => /^훈련 초점 실행 압력:|- 선택 초점:|- 주도권 경계:|- 이번 턴 적용:|- 단계 조절:/.test(line))
+    .join("\n");
+}
+
+function initialDynamicPromptFor(session, persona) {
+  return [
+    goalTurnPressureFor(session, [], persona),
     "",
     "첫 응답 실행 지침:",
     "- 관계 반영 지침과 상황 반영 지침을 반드시 반영한다.",
@@ -1865,25 +2006,65 @@ function initialPromptFor(session, persona) {
   ].join("\n");
 }
 
-function chatPromptFor(session, persona, messages) {
+function conversationMemoryFor(messages = [], persona = {}) {
+  const oldMessages = messages.slice(0, -8);
+  if (!oldMessages.length) return "요약할 오래된 대화가 없다.";
+  const text = oldMessages.map((message) => message.content || "").join("\n");
+  const userText = oldMessages.filter((message) => message.role === "user").map((message) => message.content || "").join("\n");
+  const assistantText = oldMessages.filter((message) => message.role === "assistant").map((message) => message.content || "").join("\n");
+  const concerns = labelsFromKeywords(text, concernKeywords);
+  const gospel = labelsFromKeywords(userText, gospelKeywords);
+  const asked = labelsFromKeywords(userText, [
+    ["하나님 사랑 관련 질문", /하나님.*사랑|사랑하/],
+    ["죄/회개 관련 질문", /죄|회개|잘못/],
+    ["십자가/부활 관련 질문", /십자가|부활|예수/],
+    ["믿음/구원 관련 질문", /믿음|구원|은혜/],
+    ["교회/상처 관련 질문", /교회|상처|위선|강요/]
+  ]);
+  const trustState = /좋|그렇구나|이해|듣/.test(userText)
+    ? "사용자가 일부 경청/공감을 보였으므로 페르소나는 조금 더 열릴 수 있다."
+    : /믿어야|무조건|당장|회개/.test(userText)
+      ? "사용자 접근이 압박처럼 닿았으므로 페르소나는 방어감을 유지한다."
+      : "신뢰 변화는 크지 않다.";
   return [
-    buildSessionBlock(session, persona),
+    "압축된 이전 대화 기억:",
+    `- 이미 드러난 페르소나 고민: ${concerns.length ? concerns.join(", ") : "명확하지 않음"}`,
+    `- 사용자가 이미 다룬 복음 요소: ${gospel.length ? gospel.join(", ") : "아직 직접 다루지 않음"}`,
+    `- 사용자가 이미 건드린 질문/주제: ${asked.length ? asked.join(", ") : "뚜렷한 반복 주제 없음"}`,
+    `- 현재 신뢰/방어 상태: ${trustState}`,
+    `- 아직 남은 핵심 장벽: ${persona.roleplayTemplate?.lateSessionTension?.coreQuestion || persona.gospelBarriers?.[0] || "페르소나의 핵심 복음 장벽"}`,
+    `- 반복 금지 단서: ${repeatedQuestionRisk(oldMessages)}`,
+    assistantText ? `- 오래된 페르소나 응답의 주요 소재: ${labelsFromKeywords(assistantText, concernKeywords).join(", ") || "특정 소재 없음"}` : "- 오래된 페르소나 응답 없음"
+  ].join("\n");
+}
+
+function formatConversationContext(messages = [], persona = {}) {
+  if (!messages.length) return "아직 대화가 시작되지 않았다.";
+  if (messages.length <= 12) return formatMessages(messages);
+  const recent = messages.slice(-8);
+  return [
+    conversationMemoryFor(messages, persona),
     "",
-    formatRuntimeCard(persona),
-    "",
+    "최근 대화 원문:",
+    formatMessages(recent)
+  ].join("\n");
+}
+
+function chatDynamicPromptFor(session, persona, messages) {
+  return [
     "현재 대화 단계:",
     conversationPhase(messages),
     "",
     conversationStateHints(messages, persona),
     "",
-    goalPressureFor(session, messages, persona),
+    goalTurnPressureFor(session, messages, persona),
     `- 장면 유지 지침: ${settingContinuityHint(session, messages)}`,
     `- 질문 다양성 지침: ${questionVarietyHint(messages)}`,
     "",
     formatPasExecutionPlan(persona, messages),
     "",
     "지금까지의 대화:",
-    formatMessages(messages),
+    formatConversationContext(messages, persona),
     "",
     "이번 응답 운용 규칙:",
     "- 마지막 사용자 발화에 새로 담긴 정보, 감정, 질문에 먼저 반응한다.",
@@ -1906,6 +2087,24 @@ function chatPromptFor(session, persona, messages) {
   ].join("\n");
 }
 
+function roleplayPromptPartsFor(session, persona, messages = [], { initial = false } = {}) {
+  const staticPrompt = staticRoleplayPromptFor(session, persona);
+  const dynamicPrompt = initial ? initialDynamicPromptFor(session, persona) : chatDynamicPromptFor(session, persona, messages);
+  return {
+    staticSystemBlocks: [staticPrompt],
+    dynamicInput: dynamicPrompt,
+    input: [staticPrompt, dynamicPrompt].join("\n\n")
+  };
+}
+
+function initialPromptFor(session, persona) {
+  return roleplayPromptPartsFor(session, persona, [], { initial: true }).input;
+}
+
+function chatPromptFor(session, persona, messages) {
+  return roleplayPromptPartsFor(session, persona, messages).input;
+}
+
 function feedbackInputFor(session, persona, messages) {
   return [
     "세션 정보:",
@@ -1920,21 +2119,15 @@ function feedbackInputFor(session, persona, messages) {
 
 function visibleSceneFor(session = {}, persona = {}) {
   const name = persona.name || "상대";
-  const concern =
-    persona.innerConflicts?.[0] ||
-    persona.gospelBarriers?.[0] ||
-    persona.shortDescription ||
-    "마음에 정리되지 않은 생각이 남아 있다";
-  const shortConcern = String(concern).replace(/[.。]$/, "");
   const relationship = relationshipLabels[session.relationship] || "대화 상대";
   const settingScenes = {
-    cafe_catchup: `카페에서 ${relationship}과 마주 앉았고, ${name}은 "${shortConcern}"라는 마음을 숨기고 있다.`,
-    meal_after_group: `모임이 끝나고 둘만 남았고, ${name}은 "${shortConcern}"라는 생각을 조심스럽게 꺼내려 한다.`,
-    walk_after_work: `퇴근길에 나란히 걷고 있고, ${name}은 "${shortConcern}"라는 마음 때문에 발걸음이 무겁다.`,
-    late_night_dm: `늦은 밤 카톡/DM 창이 열렸고, ${name}은 "${shortConcern}"라는 생각 때문에 잠들지 못하고 있다.`,
-    campus_or_office_break: `학교/직장 쉬는 시간에 잠깐 마주 앉았고, ${name}은 짧은 틈에도 "${shortConcern}"라는 생각이 떠오른다.`,
-    concern_shared: `${name}은 "${shortConcern}"라는 고민을 처음으로 말해보려는 순간에 있다.`,
-    faith_topic_arose: `신앙/교회 이야기가 대화의 문턱에 올라왔고, ${name}은 그 주제가 자기 삶에 닿는지 조심스럽게 살피고 있다.`
+    cafe_catchup: `카페 자리에서 ${name}과 ${relationship}이 마주 앉아 있다.`,
+    meal_after_group: `모임 뒤 조용한 자리에서 ${name}과 ${relationship}만 남아 있다.`,
+    walk_after_work: `퇴근길에 ${name}과 ${relationship}이 나란히 걷고 있다.`,
+    late_night_dm: `늦은 밤 ${name}과 ${relationship}의 채팅창이 열려 있다.`,
+    campus_or_office_break: `쉬는 시간에 ${name}과 ${relationship}이 잠깐 마주 앉아 있다.`,
+    concern_shared: `${name}이 조심스럽게 자기 고민을 꺼내려는 자리다.`,
+    faith_topic_arose: `${name}과 ${relationship} 사이에 신앙 이야기가 올라온 자리다.`
   };
   return settingScenes[session.setting] || `${name}은 ${relationship}과 마주 앉아 자기 마음을 조심스럽게 열어보려 한다.`;
 }
@@ -2082,8 +2275,8 @@ function openingLineBatchInputFor(persona, caseItems = []) {
     "- 첫 문장은 영화의 첫 장면처럼 작동해야 한다. 사용자는 이 문장 앞에 무슨 일이 있었는지 모른다.",
     "- visibleScene과 openingLine을 한 쌍으로 봤을 때 현재 장면, 페르소나의 상태, 대화가 시작될 방향이 이해되어야 한다.",
     "- 각 케이스에는 visibleScene도 함께 만든다. visibleScene은 채팅 상단에 표시될 상황 설명이다.",
-    "- visibleScene은 반드시 1문장, 45~85자 정도의 3인칭 현재 상황 설명으로 쓴다.",
-    "- visibleScene은 현재 보이는 장소/관계/감정 압력만 담고, 사용자가 보지 못한 앞 대화나 긴 배경 설명을 쓰지 않는다.",
+    "- visibleScene은 반드시 1문장, 25~45자 정도의 짧은 3인칭 장면 라벨로 쓴다.",
+    "- visibleScene은 현재 보이는 장소/관계/행동만 담고, 심리 해설, 앞 사건, 긴 배경 설명을 쓰지 않는다.",
     "- openingLine은 실제 사람이 처음 꺼낼 수 있는 자연스러운 말이어야 한다. 가벼운 인사나 상황 반응도 허용된다.",
     "- openingLine은 반드시 1문장, 12~32자 정도의 첫 말풍선 하나로 쓴다.",
     "- openingLine에 인사, 자기소개, 질문, 고민 고백을 한꺼번에 넣지 않는다. 한 번에 하나의 대화 동작만 한다.",
@@ -2143,9 +2336,9 @@ function parseOpeningLineBatch(text = "") {
 function visibleSceneIssue(scene = "", item = {}) {
   const text = String(scene || "").replace(/\s+/g, " ").trim();
   if (!text) return "상황 설명 없음";
-  if (fieldTextLength(text) > 100) return "상황 설명이 너무 김";
+  if (fieldTextLength(text) > 55) return "상황 설명이 너무 김";
   if (sentenceCount(text) > 1) return "상황 설명이 두 문장 이상임";
-  if (/(이런|저런|그)\s*(얘기|이야기)|그\s*주제|저번|아까|방금|하던\s*거|말한\s*것처럼|교회\s*다니신다고|들었다고/.test(text)) {
+  if (/(이런|저런|그)\s*(얘기|이야기)|그\s*주제|저번|아까|방금|직후|막\s*꺼낸|꺼낸|언급된\s*직후|하던\s*거|말한\s*것처럼|교회\s*다니신다고|들었다고/.test(text)) {
     return "상황 설명이 보이지 않는 앞맥락을 지시함";
   }
   if (!faithOpenInOpeningCase(item) && hasFaithTerms(text)) {
@@ -2194,7 +2387,7 @@ function openingLineRepairInputFor(persona, caseItems = []) {
     "- 금지 표현: 이런 얘기, 저런 얘기, 그 이야기, 그 얘기, 그 주제, 저번, 아까, 방금, 하던 거, 꺼내는 게, 꺼내놓고, 말한 것처럼, 뜬금없다, 계속 생각나던 것.",
     "- concern_shared 설정은 고민 내용을 문장 안에 직접 드러낸다.",
     "- faith_topic_arose 설정은 신앙/교회라는 단어를 직접 써서 장면을 연다.",
-    "- visibleScene은 반드시 1문장, 45~85자 정도로 쓴다.",
+    "- visibleScene은 반드시 1문장, 25~45자 정도의 짧은 장면 라벨로 쓴다.",
     "- openingLine은 반드시 1문장, 12~32자 정도의 자연스러운 한국어 구어체로 쓴다.",
     "- 두 문장 이상이거나 여러 화제를 한 말풍선에 넣으면 실패다.",
     "- 케이스끼리 문장 구조를 반복하지 않는다.",
@@ -2929,11 +3122,14 @@ async function handleApi(req, res, url) {
 
     if (path === "/api/start") {
       const sessionWithScene = { ...session, visibleScene: visibleSceneFor(session, persona) };
-      const input = initialPromptFor(sessionWithScene, persona);
+      const prompt = roleplayPromptPartsFor(sessionWithScene, persona, [], { initial: true });
       const { text, usage, model, provider } = await callModelWithUsage({
         modelType: "chat",
         instructions: personaPrompt,
-        input
+        input: prompt.input,
+        staticSystemBlocks: prompt.staticSystemBlocks,
+        dynamicInput: prompt.dynamicInput,
+        cacheStaticSystem: true
       });
       const conversation = createConversation({
         userId: user.id,
@@ -2947,7 +3143,7 @@ async function handleApi(req, res, url) {
         provider,
         model,
         modelType: "chat",
-        input,
+        input: prompt.input,
         output: text,
         usage
       });
@@ -2962,11 +3158,14 @@ async function handleApi(req, res, url) {
         json(res, 400, { error: "한 번의 훈련에서는 최대 30턴까지 대화할 수 있습니다. 피드백을 받고 새 훈련을 시작해주세요." });
         return;
       }
-      const input = chatPromptFor(session, persona, safeMessages);
+      const prompt = roleplayPromptPartsFor(session, persona, safeMessages);
       const { text, usage, model, provider } = await callModelWithUsage({
         modelType: "chat",
         instructions: personaPrompt,
-        input
+        input: prompt.input,
+        staticSystemBlocks: prompt.staticSystemBlocks,
+        dynamicInput: prompt.dynamicInput,
+        cacheStaticSystem: true
       });
       const conversation = findConversationForUser(user, body.conversationId);
       if (conversation) {
@@ -2979,7 +3178,7 @@ async function handleApi(req, res, url) {
           provider,
           model,
           modelType: "chat",
-          input,
+          input: prompt.input,
           output: text,
           usage
         });
