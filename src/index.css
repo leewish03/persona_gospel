@@ -121,6 +121,11 @@
   @apply mt-4 text-base font-black text-primary;
 }
 
+.feedback-content {
+  overflow-wrap: anywhere;
+  word-break: keep-all;
+}
+
 .feedback-content p,
 .feedback-content li {
   @apply text-sm leading-7 text-muted-foreground;

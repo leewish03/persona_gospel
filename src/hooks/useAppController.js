@@ -30,6 +30,7 @@ export function useAppController() {
   const [conversationId, setConversationId] = useState("");
   const [messages, setMessages] = useState([]);
   const [latestFeedbackText, setLatestFeedbackText] = useState("");
+  const [feedbackError, setFeedbackError] = useState("");
   const [sessionStarted, setSessionStarted] = useState(false);
   const [waitingForAssistant, setWaitingForAssistant] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
@@ -118,6 +119,7 @@ export function useAppController() {
     setConversationId("");
     setMessages([]);
     setLatestFeedbackText("");
+    setFeedbackError("");
     setSessionStarted(false);
     setWaitingForAssistant(false);
     setContextForm({ relationship: "", setting: "", goal: "" });
@@ -130,6 +132,7 @@ export function useAppController() {
     setConversationId("");
     setMessages([]);
     setLatestFeedbackText("");
+    setFeedbackError("");
     setSessionStarted(false);
     setWaitingForAssistant(false);
     setContextForm({ relationship: "", setting: "", goal: "" });
@@ -380,6 +383,7 @@ export function useAppController() {
     if (!validateContext()) return;
     const session = { personaId: selectedPersonaId, ...contextForm };
     setLatestFeedbackText("");
+    setFeedbackError("");
     setActiveSession(session);
     setSessionStarted(true);
     setWaitingForAssistant(true);
@@ -443,6 +447,7 @@ export function useAppController() {
       setCurrentScreen("feedback");
       return;
     }
+    setFeedbackError("");
     setIsBusy(true);
     setCurrentScreen("feedback");
     try {
@@ -452,14 +457,26 @@ export function useAppController() {
         messages: messages.filter((message) => message.role !== "system")
       });
       setLatestFeedbackText(data.text);
+      setFeedbackError("");
       setSessionStarted(false);
     } catch (error) {
-      setLatestFeedbackText(`## 피드백 생성 실패\n${error.message}`);
-      setSessionStarted(false);
+      setLatestFeedbackText("");
+      setFeedbackError(error.message || "피드백 생성에 실패했습니다.");
+      setSessionStarted(true);
     } finally {
       setIsBusy(false);
     }
   }, [conversationId, currentSession, isBusy, latestFeedbackText, messages, sessionStarted]);
+
+  const retryFeedback = useCallback(async () => {
+    if (isBusy || !sessionStarted) return;
+    await finishSessionConfirmed();
+  }, [finishSessionConfirmed, isBusy, sessionStarted]);
+
+  const returnToChatFromFeedback = useCallback(() => {
+    if (isBusy) return;
+    setCurrentScreen("chat");
+  }, [isBusy]);
 
   const cancelPendingDialog = useCallback(() => {
     setPendingDialog(null);
@@ -489,6 +506,7 @@ export function useAppController() {
     setConversationId("");
     setMessages([]);
     setLatestFeedbackText("");
+    setFeedbackError("");
     setSessionStarted(false);
     setWaitingForAssistant(false);
     setReviewConfirmed(false);
@@ -503,6 +521,7 @@ export function useAppController() {
     setConversationId(conversation.id || "");
     setMessages(conversation.messages || []);
     setLatestFeedbackText(conversation.feedbackText || "");
+    setFeedbackError("");
     setSessionStarted(conversation.status !== "finished");
     setWaitingForAssistant(false);
     setCurrentScreen("chat");
@@ -655,6 +674,7 @@ export function useAppController() {
     if (currentScreen === "feedback") {
       setMessages([]);
       setLatestFeedbackText("");
+      setFeedbackError("");
       setSessionStarted(false);
       await startSession();
     }
@@ -678,6 +698,7 @@ export function useAppController() {
       messages,
       latestFeedbackText,
       latestFeedbackHtml: markdownToHtml(latestFeedbackText),
+      feedbackError,
       sessionStarted,
       waitingForAssistant,
       isBusy,
@@ -709,6 +730,8 @@ export function useAppController() {
       startSession,
       submitMessage,
       finishSession,
+      retryFeedback,
+      returnToChatFromFeedback,
       restoreSession,
       resumeConversation,
       continueHistoryConversation,

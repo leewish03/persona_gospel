@@ -552,7 +552,24 @@ function FeedbackScreen({ state, actions }) {
       </CardHeader>
       <CardContent className="feedback-content grid gap-3">
         {state.shareNotice ? <Alert><CheckCircle2 /><AlertTitle>공유</AlertTitle><AlertDescription>{state.shareNotice}</AlertDescription></Alert> : null}
-        {state.latestFeedbackText ? <div dangerouslySetInnerHTML={{ __html: state.latestFeedbackHtml }} /> : <p className="text-muted-foreground">잠시만 기다려주세요.</p>}
+        {state.feedbackError ? (
+          <Alert variant="destructive">
+            <AlertCircle />
+            <AlertTitle>피드백을 생성하지 못했습니다</AlertTitle>
+            <AlertDescription className="grid gap-3">
+              <p>{state.feedbackError}</p>
+              <p>대화 내용은 저장되어 있습니다. 잠시 후 다시 시도하거나 대화 화면으로 돌아가 이어서 훈련할 수 있습니다.</p>
+              <div className="grid grid-cols-2 gap-2">
+                <Button type="button" variant="secondary" disabled={state.isBusy} onClick={actions.retryFeedback}>다시 시도</Button>
+                <Button type="button" variant="outline" disabled={state.isBusy} onClick={actions.returnToChatFromFeedback}>대화로 돌아가기</Button>
+              </div>
+            </AlertDescription>
+          </Alert>
+        ) : state.latestFeedbackText ? (
+          <div dangerouslySetInnerHTML={{ __html: state.latestFeedbackHtml }} />
+        ) : (
+          <p className="text-muted-foreground">잠시만 기다려주세요.</p>
+        )}
         {!state.isBusy && state.latestFeedbackText ? <Button variant="outline" onClick={actions.shareFeedback}>리포트 공유/복사</Button> : null}
       </CardContent>
     </Card>
@@ -640,7 +657,7 @@ function HistoryDetailScreen({ state, actions }) {
       </Card>
       <Card>
         <CardHeader><CardTitle>피드백 리포트</CardTitle></CardHeader>
-        <CardContent className="feedback-content" dangerouslySetInnerHTML={{ __html: item.feedbackText ? markdownToHtml(item.feedbackText) : "<p>아직 피드백이 없습니다.</p>" }} />
+        <CardContent className="feedback-content break-words pb-8" dangerouslySetInnerHTML={{ __html: item.feedbackText ? markdownToHtml(item.feedbackText) : "<p>아직 피드백이 없습니다.</p>" }} />
       </Card>
     </div>
   );
