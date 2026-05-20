@@ -1877,10 +1877,36 @@ function compactList(label, items = []) {
   return `${label}: ${list.length ? list.map((item) => `- ${item}`).join("\n") : "없음"}`;
 }
 
+function formatKeyValueBlock(label, values = {}, keys = []) {
+  const lines = keys
+    .map(([key, name]) => `- ${name}: ${values?.[key] || "없음"}`)
+    .filter(Boolean);
+  return [`${label}:`, ...(lines.length ? lines : ["- 없음"])].join("\n");
+}
+
+function formatExperienceAnchors(anchors = []) {
+  if (!Array.isArray(anchors) || !anchors.length) return "구체 경험 앵커:\n- 없음";
+  return [
+    "구체 경험 앵커:",
+    ...anchors.slice(0, 3).map((anchor) => {
+      const triggers = Array.isArray(anchor.triggeredBy) && anchor.triggeredBy.length ? ` / 트리거=${anchor.triggeredBy.join(", ")}` : "";
+      return `- ${anchor.id || "anchor"}: ${anchor.summary || "없음"} -> ${anchor.formedBelief || "없음"}${triggers}`;
+    })
+  ].join("\n");
+}
+
+function formatInterpretationRules(rules = []) {
+  if (!Array.isArray(rules) || !rules.length) return "사용자 말의 해석:\n- 없음";
+  return [
+    "사용자 말의 해석:",
+    ...rules.slice(0, 5).map((rule) => `- ${rule.userMove || "사용자 발화"}: ${rule.personaHears || "없음"} -> ${rule.naturalResponse || "없음"}`)
+  ].join("\n");
+}
+
 function formatCompactPersonaCard(persona) {
   const template = persona.roleplayTemplate || {};
   const lines = [
-    "페르소나 핵심 카드:",
+    "페르소나 심층 카드:",
     `- 이름/나이/성별: ${persona.name} / ${persona.age || "나이 미상"} / ${persona.gender || "성별 미상"}`,
     `- 제목: ${persona.title || "없음"}`,
     `- 설명: ${persona.shortDescription || "없음"}`,
@@ -1888,6 +1914,30 @@ function formatCompactPersonaCard(persona) {
     compactList("내면 갈등", takeList(persona.innerConflicts, 3)),
     compactList("복음 장벽", takeList(persona.gospelBarriers, 3)),
     compactList("대화 규칙", persona.conversationRules || []),
+    "",
+    formatKeyValueBlock("개인 세계", template.personalWorld, [
+      ["coreValue", "핵심 가치"],
+      ["selfImage", "자기 이미지"],
+      ["hiddenNeed", "숨은 필요"],
+      ["protectiveStrategy", "방어 방식"],
+      ["contradiction", "내적 모순"]
+    ]),
+    compactList("생활감", template.presentLifeTexture || []),
+    formatExperienceAnchors(template.experienceAnchors || []),
+    formatInterpretationRules(template.interpretationRules || []),
+    formatKeyValueBlock("관계 반응", template.relationshipBehavior, [
+      ["firstMeeting", "처음 만난 사람"],
+      ["acquaintance", "안면/지인"],
+      ["friend", "친한 관계"],
+      ["whenPressured", "압박받을 때"],
+      ["whenRespected", "존중받을 때"]
+    ]),
+    formatKeyValueBlock("말투 지문", template.speechFingerprint, [
+      ["sentenceRhythm", "문장 리듬"]
+    ]),
+    compactList("자주 쓰는 대화 동작", template.speechFingerprint?.habitualMoves || []),
+    compactList("반복 금지 표현", template.speechFingerprint?.avoidRepeating || []),
+    compactList("구체 단어", template.speechFingerprint?.concreteWordBank || []),
     "",
     "실행 구조:",
     `- 핵심 성향: ${template.coreStack?.coreTrait || "없음"}`,
@@ -2101,6 +2151,11 @@ function chatDynamicPromptFor(session, persona, messages) {
     "- 신앙 주제가 열리기 전에는 일상 고민, 가치관, 관계 거리감만 드러내고, 사용자가 연결하면 그때 반응한다.",
     "- 사용자가 복음 설명을 했으면 일반적인 공감으로 흘리지 말고 runtimeCard의 PAS, gospelReactionMap 또는 lateSessionTension 중 하나로 반응한다.",
     "- PAS 후보의 예시는 그대로 복사하지 말고 의미와 구조만 참고한다.",
+    "- 이번 응답에서 추상 장벽만 반복하지 않는다.",
+    "- 사용자 말이 페르소나에게 어떤 의미로 들렸는지 먼저 판단하고, 그 해석에서 반응한다.",
+    "- 필요하면 personalWorld, presentLifeTexture, experienceAnchors 중 하나를 한 문장 안에 짧게 비춘다.",
+    "- 사용자가 경청하면 조금 더 구체화하고, 압박/진단/단정하면 더 조심스럽게 선을 긋는다.",
+    "- 사건은 experienceAnchors 범위 안에서만 암시하고, 새롭고 자극적인 세부사항을 만들지 않는다.",
     "",
     "마지막 사용자 발화에 이어 페르소나의 실제 말만 출력하라.",
     "최종 응답은 자연스러운 한국어 구어체로만 작성한다.",
