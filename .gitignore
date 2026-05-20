@@ -3,3 +3,4 @@ storage/
 .env.*
 !.env.example
 *.log
+node_modules/

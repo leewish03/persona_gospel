@@ -44,8 +44,22 @@ const chatInputPrice = Number(globalThis.process?.env?.OPENAI_CHAT_INPUT_USD_PER
 const chatOutputPrice = Number(globalThis.process?.env?.OPENAI_CHAT_OUTPUT_USD_PER_1M || 0.6);
 const feedbackInputPrice = Number(globalThis.process?.env?.OPENAI_FEEDBACK_INPUT_USD_PER_1M || 2);
 const feedbackOutputPrice = Number(globalThis.process?.env?.OPENAI_FEEDBACK_OUTPUT_USD_PER_1M || 8);
+/** Anthropic USD per 1M tokens (docs.claude.com pricing, 2026-05 기준 대표값; 환경변수로 덮어쓰기) */
+const anthropicChatSonnetInput = Number(globalThis.process?.env?.ANTHROPIC_CHAT_SONNET_INPUT_USD_PER_1M || 3);
+const anthropicChatSonnetOutput = Number(globalThis.process?.env?.ANTHROPIC_CHAT_SONNET_OUTPUT_USD_PER_1M || 15);
+const anthropicChatOpusInput = Number(globalThis.process?.env?.ANTHROPIC_CHAT_OPUS_INPUT_USD_PER_1M || 5);
+const anthropicChatOpusOutput = Number(globalThis.process?.env?.ANTHROPIC_CHAT_OPUS_OUTPUT_USD_PER_1M || 25);
+const anthropicChatHaikuInput = Number(globalThis.process?.env?.ANTHROPIC_CHAT_HAIKU_INPUT_USD_PER_1M || 1);
+const anthropicChatHaikuOutput = Number(globalThis.process?.env?.ANTHROPIC_CHAT_HAIKU_OUTPUT_USD_PER_1M || 5);
+const anthropicFeedbackSonnetInput = Number(globalThis.process?.env?.ANTHROPIC_FEEDBACK_SONNET_INPUT_USD_PER_1M || anthropicChatSonnetInput);
+const anthropicFeedbackSonnetOutput = Number(globalThis.process?.env?.ANTHROPIC_FEEDBACK_SONNET_OUTPUT_USD_PER_1M || anthropicChatSonnetOutput);
+const anthropicFeedbackOpusInput = Number(globalThis.process?.env?.ANTHROPIC_FEEDBACK_OPUS_INPUT_USD_PER_1M || anthropicChatOpusInput);
+const anthropicFeedbackOpusOutput = Number(globalThis.process?.env?.ANTHROPIC_FEEDBACK_OPUS_OUTPUT_USD_PER_1M || anthropicChatOpusOutput);
+const anthropicFeedbackHaikuInput = Number(globalThis.process?.env?.ANTHROPIC_FEEDBACK_HAIKU_INPUT_USD_PER_1M || anthropicChatHaikuInput);
+const anthropicFeedbackHaikuOutput = Number(globalThis.process?.env?.ANTHROPIC_FEEDBACK_HAIKU_OUTPUT_USD_PER_1M || anthropicChatHaikuOutput);
 const sessions = new Map();
 const oauthStates = new Map();
+const openingLineJobs = new Map();
 
 function loadLocalEnv(path) {
   if (globalThis.process?.env?.NODE_ENV === "production" || !existsSync(path)) return;
@@ -88,6 +102,9 @@ const defaultSettings = {
   cost: {
     usdToKrw,
     monthlyBudgetKrw: 0
+  },
+  openingLines: {
+    latest: null
   },
   ai: {
     chat: {
@@ -166,6 +183,7 @@ function mergeSettings(base, incoming) {
   return {
     donation: { ...(base.donation || {}), ...(incoming.donation || {}) },
     cost: { ...(base.cost || {}), ...(incoming.cost || {}) },
+    openingLines: { ...(base.openingLines || {}), ...(incoming.openingLines || {}) },
     ai: mergeAiSettings(base.ai || {}, incoming.ai || {})
   };
 }
@@ -198,6 +216,11 @@ function sanitizeModelSettings(input = {}, fallback = {}) {
     ? input.thinkingDisplay
     : fallback.thinkingDisplay || "omitted";
 
+  let thinkingBudgetTokens = cleanOptionalNumber(input.thinkingBudgetTokens, { min: 1024, max: 64000 }) || 0;
+  if (thinkingType === "enabled" && thinkingBudgetTokens < 1024) {
+    thinkingBudgetTokens = 8192;
+  }
+
   return {
     provider,
     model,
@@ -206,7 +229,7 @@ function sanitizeModelSettings(input = {}, fallback = {}) {
     topP: cleanOptionalNumber(input.topP, { min: 0, max: 1 }),
     reasoningEffort,
     thinkingType,
-    thinkingBudgetTokens: cleanOptionalNumber(input.thinkingBudgetTokens, { min: 1024, max: 64000 }) || 0,
+    thinkingBudgetTokens,
     thinkingDisplay
   };
 }
@@ -227,8 +250,14 @@ function sanitizeSettings(input = {}) {
     ai: {
       chat: sanitizeModelSettings(merged.ai.chat, defaultSettings.ai.chat),
       feedback: sanitizeModelSettings(merged.ai.feedback, defaultSettings.ai.feedback)
-    }
+    },
+    openingLines: sanitizeOpeningLinesSettings(merged.openingLines)
   };
+}
+
+function sanitizeOpeningLinesSettings(input = {}) {
+  const latest = input?.latest && typeof input.latest === "object" ? input.latest : null;
+  return { latest: latest ? publicOpeningLineResult(latest) : null };
 }
 
 async function supabaseRequest(path, { method = "GET", body } = {}) {
@@ -729,6 +758,7 @@ function publicConversation(conversation, { includeMessages = false, includeFeed
     relationship: conversation.session?.relationship || "",
     setting: conversation.session?.setting || "",
     goal: conversation.session?.goal || "",
+    visibleScene: conversation.session?.visibleScene || "",
     messageCount: conversation.messages?.length || 0,
     feedbackSummary: conversation.feedbackSummary || summarizeFeedback(conversation.feedbackText || ""),
     status: conversation.status,
@@ -775,7 +805,7 @@ function filterConversations(conversations, searchParams = new URLSearchParams()
 }
 
 function paginate(items, searchParams = new URLSearchParams()) {
-  const limit = Math.min(100, Math.max(1, Number(searchParams.get("limit") || 30)));
+  const limit = Math.min(500, Math.max(1, Number(searchParams.get("limit") || 30)));
   return { items: items.slice(0, limit), nextCursor: items.length > limit ? String(limit) : null };
 }
 
@@ -805,7 +835,10 @@ function usageSummary(events = db.usageEvents) {
   const monthly = events.filter((event) => isSameMonth(event.createdAt));
   const sum = (items, key) => items.reduce((total, item) => total + Number(item[key] || 0), 0);
   const byType = Object.fromEntries(
-    ["chat_start", "chat_message", "feedback"].map((type) => [type, monthly.filter((event) => event.eventType === type).length])
+    ["chat_start", "chat_message", "feedback", "opening_line_generation"].map((type) => [
+      type,
+      monthly.filter((event) => event.eventType === type).length
+    ])
   );
   return {
     events: events.length,
@@ -815,6 +848,78 @@ function usageSummary(events = db.usageEvents) {
     estimatedMonthlyCostUsd: Number(sum(monthly, "estimatedCostUsd").toFixed(6)),
     estimatedMonthlyCostKrw: Number(sum(monthly, "estimatedCostKrw").toFixed(2)),
     byType
+  };
+}
+
+function filterUsageEvents(events = db.usageEvents, searchParams = new URLSearchParams()) {
+  const from = searchParams.get("from") ? new Date(searchParams.get("from")) : null;
+  const to = searchParams.get("to") ? new Date(searchParams.get("to")) : null;
+  const q = String(searchParams.get("q") || "").trim().toLowerCase();
+  return events.filter((event) => {
+    const created = new Date(event.createdAt);
+    if (from && created < from) return false;
+    if (to && created > to) return false;
+    if (!q) return true;
+    const user = db.users.find((item) => item.id === event.userId);
+    const conversation = db.conversations.find((item) => item.id === event.conversationId);
+    const haystack = [
+      event.eventType,
+      event.model,
+      user?.email,
+      user?.displayName,
+      user?.profile?.name,
+      user?.profile?.church,
+      conversation?.session?.personaId,
+      conversation?.session?.goal
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    return haystack.includes(q);
+  });
+}
+
+function usageBreakdowns(events = []) {
+  const byDayMap = new Map();
+  const byUserMap = new Map();
+  const addTotals = (target, event) => {
+    target.events += 1;
+    target.inputTokens += Number(event.inputTokens || 0);
+    target.outputTokens += Number(event.outputTokens || 0);
+    target.estimatedCostKrw += Number(event.estimatedCostKrw || 0);
+    target.estimatedCostUsd += Number(event.estimatedCostUsd || 0);
+  };
+  for (const event of events) {
+    const day = String(event.createdAt || "").slice(0, 10) || "unknown";
+    if (!byDayMap.has(day)) {
+      byDayMap.set(day, { date: day, events: 0, inputTokens: 0, outputTokens: 0, estimatedCostKrw: 0, estimatedCostUsd: 0 });
+    }
+    addTotals(byDayMap.get(day), event);
+
+    const user = db.users.find((item) => item.id === event.userId);
+    const key = event.userId || "unknown";
+    if (!byUserMap.has(key)) {
+      byUserMap.set(key, {
+        userId: key,
+        name: user?.profile?.name || user?.displayName || user?.email || "알 수 없음",
+        email: user?.email || "",
+        events: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        estimatedCostKrw: 0,
+        estimatedCostUsd: 0
+      });
+    }
+    addTotals(byUserMap.get(key), event);
+  }
+  const normalize = (item) => ({
+    ...item,
+    estimatedCostKrw: Number(item.estimatedCostKrw.toFixed(2)),
+    estimatedCostUsd: Number(item.estimatedCostUsd.toFixed(6))
+  });
+  return {
+    byDay: [...byDayMap.values()].map(normalize).sort((a, b) => a.date.localeCompare(b.date)),
+    byUser: [...byUserMap.values()].map(normalize).sort((a, b) => b.estimatedCostKrw - a.estimatedCostKrw)
   };
 }
 
@@ -848,10 +953,45 @@ function extractAnthropicText(response) {
 }
 
 function normalizeAnthropicUsage(usage = {}) {
+  const inputTokens = Number(usage.input_tokens || 0);
+  const outputTokens = Number(usage.output_tokens || 0);
+  const reasoningTokens = Number(usage.output_tokens_details?.reasoning_tokens || usage.reasoning_tokens || 0);
   return {
-    inputTokens: Number(usage.input_tokens || 0),
-    outputTokens: Number(usage.output_tokens || 0),
-    reasoningTokens: 0
+    inputTokens,
+    outputTokens,
+    reasoningTokens
+  };
+}
+
+function anthropicPricePerMtok(model = "", modelType = "chat") {
+  const id = String(model || "").toLowerCase();
+  const isFeedback = modelType === "feedback";
+  const opusIn = isFeedback ? anthropicFeedbackOpusInput : anthropicChatOpusInput;
+  const opusOut = isFeedback ? anthropicFeedbackOpusOutput : anthropicChatOpusOutput;
+  const sonnetIn = isFeedback ? anthropicFeedbackSonnetInput : anthropicChatSonnetInput;
+  const sonnetOut = isFeedback ? anthropicFeedbackSonnetOutput : anthropicChatSonnetOutput;
+  const haikuIn = isFeedback ? anthropicFeedbackHaikuInput : anthropicChatHaikuInput;
+  const haikuOut = isFeedback ? anthropicFeedbackHaikuOutput : anthropicChatHaikuOutput;
+  if (id.includes("haiku")) return { inputPrice: haikuIn, outputPrice: haikuOut };
+  if (id.includes("opus")) return { inputPrice: opusIn, outputPrice: opusOut };
+  return { inputPrice: sonnetIn, outputPrice: sonnetOut };
+}
+
+function estimateCost({ provider = "openai", model = "", modelType, inputTokens, outputTokens }) {
+  let inputPrice;
+  let outputPrice;
+  if (provider === "anthropic") {
+    const tier = anthropicPricePerMtok(model, modelType);
+    inputPrice = tier.inputPrice;
+    outputPrice = tier.outputPrice;
+  } else {
+    inputPrice = modelType === "feedback" ? feedbackInputPrice : chatInputPrice;
+    outputPrice = modelType === "feedback" ? feedbackOutputPrice : chatOutputPrice;
+  }
+  const estimatedCostUsd = (Number(inputTokens || 0) / 1_000_000) * inputPrice + (Number(outputTokens || 0) / 1_000_000) * outputPrice;
+  return {
+    estimatedCostUsd: Number(estimatedCostUsd.toFixed(6)),
+    estimatedCostKrw: Number((estimatedCostUsd * (db.settings?.cost?.usdToKrw || usdToKrw)).toFixed(2))
   };
 }
 
@@ -869,8 +1009,8 @@ function assertProviderKey(provider) {
   return appOpenAIKey;
 }
 
-async function callModelWithUsage({ modelType, instructions, input }) {
-  const settings = modelSettingsFor(modelType);
+async function callModelWithUsage({ modelType, instructions, input, overrides = {} }) {
+  const settings = { ...modelSettingsFor(modelType), ...overrides };
   const apiKey = assertProviderKey(settings.provider);
   if (settings.provider === "anthropic") {
     const result = await callAnthropicWithUsage({
@@ -961,38 +1101,77 @@ async function callAnthropicWithUsage({
   thinkingBudgetTokens = 0,
   thinkingDisplay = "omitted"
 }) {
-  const payload = {
-    model,
-    max_tokens: maxOutputTokens,
-    system: instructions,
-    messages: [{ role: "user", content: input }]
+  const id = String(model || "").toLowerCase();
+  const supportsAdaptive = /claude-(opus-4-7|opus-4-6|sonnet-4-6)/.test(id) || id.includes("mythos");
+  const opus47 = id.includes("opus-4-7");
+  let effectiveType = thinkingType;
+  if (opus47 && effectiveType === "enabled") effectiveType = "adaptive";
+  if (effectiveType === "adaptive" && !supportsAdaptive) {
+    if (id.includes("haiku") || /4-5|opus-4-1|sonnet-4-2025|opus-4-2025/.test(id)) {
+      effectiveType = "enabled";
+    } else {
+      effectiveType = "disabled";
+    }
+  }
+
+  let budget = Math.max(1024, Number(thinkingBudgetTokens) || 8192);
+  let maxTokens = Math.max(1, Number(maxOutputTokens) || 900);
+  if (effectiveType === "enabled" && budget >= maxTokens) {
+    maxTokens = Math.min(64000, budget + 2048);
+  }
+
+  const buildPayload = ({ includeThinking = true, tokenLimit = maxTokens } = {}) => {
+    const payload = {
+      model,
+      max_tokens: tokenLimit,
+      system: instructions,
+      messages: [{ role: "user", content: input }]
+    };
+    if (temperature !== "") payload.temperature = Number(temperature);
+    if (topP !== "") payload.top_p = Number(topP);
+
+    if (includeThinking && effectiveType === "adaptive") {
+      payload.thinking = { type: "adaptive" };
+    } else if (includeThinking && effectiveType === "enabled") {
+      const display = thinkingDisplay === "summarized" || thinkingDisplay === "omitted" ? thinkingDisplay : "omitted";
+      payload.thinking = { type: "enabled", budget_tokens: budget, display };
+    }
+    return payload;
   };
-  if (temperature !== "") payload.temperature = Number(temperature);
-  if (topP !== "") payload.top_p = Number(topP);
-  if (thinkingType === "adaptive") {
-    payload.thinking = { type: "adaptive", display: thinkingDisplay };
-  } else if (thinkingType === "enabled" && thinkingBudgetTokens > 0) {
-    payload.thinking = { type: "enabled", budget_tokens: thinkingBudgetTokens };
+
+  const requestAnthropic = async (payload) => {
+    const result = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "anthropic-version": "2023-06-01",
+        "x-api-key": apiKey
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const data = await result.json().catch(() => ({}));
+    if (!result.ok) {
+      const message = data?.error?.message || `Anthropic API request failed with status ${result.status}.`;
+      throw new Error(message);
+    }
+    return data;
+  };
+
+  let data = await requestAnthropic(buildPayload());
+  let text = extractAnthropicText(data);
+
+  if (!text && effectiveType !== "disabled") {
+    const retryTokens = Math.max(maxTokens, 2048);
+    data = await requestAnthropic(buildPayload({ includeThinking: false, tokenLimit: retryTokens }));
+    text = extractAnthropicText(data);
   }
 
-  const result = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "anthropic-version": "2023-06-01",
-      "x-api-key": apiKey
-    },
-    body: JSON.stringify(payload)
-  });
-
-  const data = await result.json().catch(() => ({}));
-  if (!result.ok) {
-    const message = data?.error?.message || `Anthropic API request failed with status ${result.status}.`;
-    throw new Error(message);
+  if (!text) {
+    const contentTypes = (data.content || []).map((block) => block?.type).filter(Boolean).join(", ") || "none";
+    const reason = data.stop_reason ? ` stop_reason=${data.stop_reason}` : "";
+    throw new Error(`Claude 응답에서 텍스트를 찾지 못했습니다.${reason} content_types=${contentTypes}`);
   }
-
-  const text = extractAnthropicText(data);
-  if (!text) throw new Error("Claude 응답에서 텍스트를 찾지 못했습니다.");
   return { text, usage: normalizeAnthropicUsage(data.usage) };
 }
 
@@ -1017,24 +1196,15 @@ function estimateUsage(input, output, usage = {}) {
   };
 }
 
-function estimateCost({ modelType, inputTokens, outputTokens }) {
-  const inputPrice = modelType === "feedback" ? feedbackInputPrice : chatInputPrice;
-  const outputPrice = modelType === "feedback" ? feedbackOutputPrice : chatOutputPrice;
-  const estimatedCostUsd = (inputTokens / 1_000_000) * inputPrice + (outputTokens / 1_000_000) * outputPrice;
-  return {
-    estimatedCostUsd: Number(estimatedCostUsd.toFixed(6)),
-    estimatedCostKrw: Number((estimatedCostUsd * (db.settings?.cost?.usdToKrw || usdToKrw)).toFixed(2))
-  };
-}
-
-function recordUsageEvent({ userId, conversationId = "", eventType, model, modelType, input, output, usage }) {
+function recordUsageEvent({ userId, conversationId = "", eventType, provider = "openai", model, modelType, input, output, usage }) {
   const estimatedUsage = estimateUsage(input, output, usage);
-  const cost = estimateCost({ modelType, ...estimatedUsage });
+  const cost = estimateCost({ provider, model, modelType, ...estimatedUsage });
   db.usageEvents.unshift({
     id: randomUUID(),
     userId,
     conversationId,
     eventType,
+    provider,
     model,
     ...estimatedUsage,
     ...cost,
@@ -1473,6 +1643,432 @@ function feedbackInputFor(session, persona, messages) {
   ].join("\n");
 }
 
+function visibleSceneFor(session = {}, persona = {}) {
+  const name = persona.name || "상대";
+  const concern =
+    persona.innerConflicts?.[0] ||
+    persona.gospelBarriers?.[0] ||
+    persona.shortDescription ||
+    "마음에 정리되지 않은 생각이 남아 있다";
+  const shortConcern = String(concern).replace(/[.。]$/, "");
+  const relationship = relationshipLabels[session.relationship] || "대화 상대";
+  const settingScenes = {
+    cafe_catchup: `카페에서 ${relationship}과 마주 앉았고, ${name}은 "${shortConcern}"라는 마음을 숨기고 있다.`,
+    meal_after_group: `모임이 끝나고 둘만 남았고, ${name}은 "${shortConcern}"라는 생각을 조심스럽게 꺼내려 한다.`,
+    walk_after_work: `퇴근길에 나란히 걷고 있고, ${name}은 "${shortConcern}"라는 마음 때문에 발걸음이 무겁다.`,
+    late_night_dm: `늦은 밤 카톡/DM 창이 열렸고, ${name}은 "${shortConcern}"라는 생각 때문에 잠들지 못하고 있다.`,
+    campus_or_office_break: `학교/직장 쉬는 시간에 잠깐 마주 앉았고, ${name}은 짧은 틈에도 "${shortConcern}"라는 생각이 떠오른다.`,
+    concern_shared: `${name}은 "${shortConcern}"라는 고민을 처음으로 말해보려는 순간에 있다.`,
+    faith_topic_arose: `신앙/교회 이야기가 대화의 문턱에 올라왔고, ${name}은 그 주제가 자기 삶에 닿는지 조심스럽게 살피고 있다.`
+  };
+  return settingScenes[session.setting] || `${name}은 ${relationship}과 마주 앉아 자기 마음을 조심스럽게 열어보려 한다.`;
+}
+
+const openingLineRelationships = ["first_meeting", "acquaintance", "casual_friend", "old_friend", "prior_faith_talk"];
+const openingLineSettings = [
+  "cafe_catchup",
+  "meal_after_group",
+  "walk_after_work",
+  "late_night_dm",
+  "campus_or_office_break",
+  "concern_shared",
+  "faith_topic_arose"
+];
+const openingLineGoal = "listen_and_understand";
+
+function buildOpeningLineCases() {
+  const cases = [];
+  const edgePairs = [
+    ["first_meeting", "cafe_catchup"],
+    ["first_meeting", "campus_or_office_break"],
+    ["acquaintance", "meal_after_group"],
+    ["acquaintance", "concern_shared"],
+    ["casual_friend", "walk_after_work"],
+    ["old_friend", "late_night_dm"],
+    ["prior_faith_talk", "faith_topic_arose"]
+  ];
+
+  personas.forEach((persona, personaIndex) => {
+    const used = new Set();
+    const selected = [];
+    const addPair = (relationship, setting) => {
+      const key = `${relationship}:${setting}`;
+      if (used.has(key)) return;
+      used.add(key);
+      selected.push({ relationship, setting });
+    };
+
+    for (const [relationship, setting] of edgePairs) addPair(relationship, setting);
+    for (let settingIndex = 0; settingIndex < openingLineSettings.length; settingIndex += 1) {
+      const relationship = openingLineRelationships[(settingIndex + personaIndex * 2) % openingLineRelationships.length];
+      addPair(relationship, openingLineSettings[settingIndex]);
+    }
+    for (let relationshipIndex = 0; selected.length < 18 && relationshipIndex < openingLineRelationships.length; relationshipIndex += 1) {
+      for (let settingIndex = 0; selected.length < 18 && settingIndex < openingLineSettings.length; settingIndex += 1) {
+        const shiftedSetting = openingLineSettings[(settingIndex + personaIndex + relationshipIndex) % openingLineSettings.length];
+        addPair(openingLineRelationships[relationshipIndex], shiftedSetting);
+      }
+    }
+
+    selected.slice(0, 18).forEach((item, index) => {
+      cases.push({
+        id: `${persona.id}-${String(index + 1).padStart(2, "0")}`,
+        personaId: persona.id,
+        personaName: persona.name,
+        personaTitle: persona.title,
+        relationship: item.relationship,
+        relationshipLabel: relationshipLabels[item.relationship] || item.relationship,
+        setting: item.setting,
+        settingLabel: settingLabels[item.setting] || item.setting,
+        goal: openingLineGoal,
+        goalLabel: goalLabels[openingLineGoal] || openingLineGoal,
+        visibleScene: visibleSceneFor(
+          { personaId: persona.id, relationship: item.relationship, setting: item.setting, goal: openingLineGoal },
+          persona
+        )
+      });
+    });
+  });
+  return cases;
+}
+
+function firstOpeningSentence(text = "") {
+  const clean = String(text || "")
+    .replace(/\s+/g, " ")
+    .replace(/^["'“”‘’]+|["'“”‘’]+$/g, "")
+    .trim();
+  if (!clean) return "";
+  const match = clean.match(/^.{8,140}?[.!?。！？]|^.{8,140}?[.?!]|^.{1,100}(?=\s|$)/);
+  return (match?.[0] || clean.slice(0, 100)).trim();
+}
+
+function openingLineInputFor(session, persona, caseItem) {
+  return [
+    initialPromptFor(session, persona),
+    "",
+    "관리자 첫 시작 문장 생성 작업:",
+    "- 전체 대화 응답이 아니라 사용자가 처음 보게 되는 첫 시작 문장 1개만 출력한다.",
+    "- 첫 문장은 영화의 첫 장면처럼 작동해야 한다. 사용자가 보지 못한 앞 대화나 이전 사건을 가리키지 않는다.",
+    "- 첫 문장 자체만 읽어도 현재 장면, 페르소나의 상태, 대화가 시작될 방향이 이해되어야 한다.",
+    "- '이런 얘기', '그 이야기', '저번에 하던 거', '아까', '방금', '계속 생각나던 것'처럼 보이지 않는 앞맥락을 지시하는 표현을 쓰지 않는다.",
+    "- concern_shared 설정이어도 '이미 말한 고민'을 가리키지 말고, 고민 내용을 첫 문장 안에 직접 드러낸다.",
+    "- faith_topic_arose 설정이어도 '그 주제'라고 하지 말고, 신앙/교회라는 단어를 직접 써서 장면을 연다.",
+    "- 관계, 상황, 페르소나의 핵심 갈등이 한 문장 안에서 자연스럽게 느껴져야 한다.",
+    "- 설명, 번호, 따옴표, 내부 분석, QA 메모는 출력하지 않는다.",
+    "- 12~38자 정도의 자연스러운 한국어 구어체 한 문장으로만 출력한다.",
+    "",
+    `케이스 ID: ${caseItem.id}`
+  ].join("\n");
+}
+
+function openingLineBatchInputFor(persona, caseItems = []) {
+  const cases = caseItems.map((item) => ({
+    id: item.id,
+    visibleSceneDraft: item.visibleScene,
+    relationship: item.relationshipLabel,
+    relationshipGuidance: relationshipGuidance[item.relationship] || "",
+    setting: item.settingLabel,
+    settingGuidance: settingGuidance[item.setting] || "",
+    goal: item.goalLabel
+  }));
+  return [
+    guardrailPrompt,
+    "",
+    "관리자 첫 시작 문장 배치 생성 작업:",
+    "- 아래 케이스마다 사용자가 처음 보게 되는 첫 시작 문장 1개를 만든다.",
+    "- 첫 문장은 영화의 첫 장면처럼 작동해야 한다. 사용자는 이 문장 앞에 무슨 일이 있었는지 모른다.",
+    "- 각 문장 자체만 읽어도 현재 장면, 페르소나의 상태, 대화가 시작될 방향이 이해되어야 한다.",
+    "- 각 케이스에는 visibleScene도 함께 만든다. visibleScene은 채팅 상단에 표시될 상황 설명이다.",
+    "- visibleScene은 35~85자 정도의 3인칭 현재 상황 설명으로 쓴다.",
+    "- visibleScene은 사용자가 보지 못한 앞 대화를 가리키지 않고, 지금 화면에 열린 첫 장면만 설명한다.",
+    "- 보이지 않는 앞맥락을 지시하지 않는다.",
+    "- 금지 표현: 이런 얘기, 저런 얘기, 그 이야기, 그 얘기, 저번에 하던 거, 아까, 방금, 계속 생각나던 것, 꺼내는 게, 꺼내놓고, 말한 것처럼.",
+    "- concern_shared 설정은 '이미 고민을 말한 뒤'처럼 쓰지 말고, 페르소나의 고민 내용을 첫 문장 안에 직접 드러낸다.",
+    "- faith_topic_arose 설정은 '그 주제'라고 쓰지 말고, 신앙/교회라는 단어를 직접 써서 장면을 연다.",
+    "- prior_faith_talk 관계여도 '저번 그 이야기'처럼 구체 내용 없는 과거 지시를 쓰지 않는다. 필요하면 '신앙 이야기는 아직 조심스럽다'처럼 현재 반응으로 시작한다.",
+    "- 각 문장은 관계, 상황, 페르소나의 핵심 갈등이 자연스럽게 느껴져야 한다.",
+    "- 좋은 첫 문장의 구조는 '장면 단서 + 현재 감정/상태 + 대화 여지'다. 단, 매번 같은 구조로 반복하지 않는다.",
+    "- 첫 문장부터 복음이나 교회 이야기로 바로 뛰어들지 않는다. 단, faith_topic_arose 설정은 신앙/교회 주제에 대한 조심스러운 반응을 포함할 수 있다.",
+    "- 각 문장은 14~36자 정도의 자연스러운 한국어 구어체로 쓴다.",
+    "- 케이스끼리 같은 문장 구조와 말버릇을 반복하지 않는다.",
+    "- 설명, 번호, 마크다운, 내부 분석은 출력하지 않는다.",
+    "",
+    "선택된 페르소나 요약:",
+    formatPersonaCard(persona),
+    "",
+    "생성 케이스:",
+    JSON.stringify(cases, null, 2),
+    "",
+    "출력 형식:",
+    "[{\"id\":\"케이스 ID\",\"visibleScene\":\"채팅 상단 상황 설명\",\"openingLine\":\"첫 시작 문장\"}]",
+    "",
+    "JSON 배열만 출력하라. 다른 텍스트는 출력하지 않는다."
+  ].join("\n");
+}
+
+function parseOpeningLineBatch(text = "") {
+  const clean = String(text || "")
+    .replace(/^```(?:json)?/i, "")
+    .replace(/```$/i, "")
+    .trim();
+  const start = clean.indexOf("[");
+  const end = clean.lastIndexOf("]");
+  const jsonText = start >= 0 && end > start ? clean.slice(start, end + 1) : clean;
+  const parsed = JSON.parse(jsonText);
+  if (!Array.isArray(parsed)) throw new Error("Claude 배치 응답이 JSON 배열이 아닙니다.");
+  return new Map(
+    parsed
+      .filter((item) => item && typeof item.id === "string")
+      .map((item) => [
+        item.id,
+        {
+          openingLine: String(item.openingLine || item.text || "").trim(),
+          visibleScene: String(item.visibleScene || item.scene || "").trim()
+        }
+      ])
+  );
+}
+
+function openingLineIssue(line = "") {
+  const text = String(line || "").trim();
+  if (!text) return "빈 문장";
+  if (text.length > 42) return "첫 시작 문장치고 너무 김";
+  if (/(이런|저런|그)\s*(얘기|이야기)|그\s*주제|저번|아까|방금|하던\s*거|꺼내|꺼내놓|말한\s*것처럼|뜬금없|계속\s*생각나/.test(text)) {
+    return "사용자가 보지 못한 앞맥락을 지시함";
+  }
+  return "";
+}
+
+function openingLineRepairInputFor(persona, caseItems = []) {
+  const cases = caseItems.map((item) => ({
+    id: item.id,
+    relationship: item.relationshipLabel,
+    setting: item.settingLabel,
+    visibleScene: item.visibleScene || "",
+    previousLine: item.openingLine || "",
+    issue: item.error || openingLineIssue(item.openingLine),
+    goal: item.goalLabel
+  }));
+  return [
+    "첫 시작 문장 수정 작업:",
+    "- 아래 문장들은 첫 대화 시작 문장으로 부적절해서 수정해야 한다.",
+    "- 사용자는 이 문장 앞에 무슨 일이 있었는지 모른다.",
+    "- 수정 문장 자체만 읽어도 현재 장면, 페르소나의 상태, 대화가 시작될 방향이 이해되어야 한다.",
+    "- visibleScene도 필요하면 함께 수정한다. visibleScene은 채팅 상단에 표시될 3인칭 현재 상황 설명이다.",
+    "- 보이지 않는 앞맥락 지시를 쓰지 않는다.",
+    "- 금지 표현: 이런 얘기, 저런 얘기, 그 이야기, 그 얘기, 그 주제, 저번, 아까, 방금, 하던 거, 꺼내는 게, 꺼내놓고, 말한 것처럼, 뜬금없다, 계속 생각나던 것.",
+    "- concern_shared 설정은 고민 내용을 문장 안에 직접 드러낸다.",
+    "- faith_topic_arose 설정은 신앙/교회라는 단어를 직접 써서 장면을 연다.",
+    "- 14~36자 정도의 자연스러운 한국어 구어체 한 문장으로 쓴다.",
+    "- 케이스끼리 문장 구조를 반복하지 않는다.",
+    "",
+    "페르소나:",
+    formatPersonaCard(persona),
+    "",
+    "수정 대상:",
+    JSON.stringify(cases, null, 2),
+    "",
+    "출력 형식:",
+    "[{\"id\":\"케이스 ID\",\"visibleScene\":\"수정된 상황 설명\",\"openingLine\":\"수정된 첫 시작 문장\"}]",
+    "",
+    "JSON 배열만 출력하라."
+  ].join("\n");
+}
+
+function publicOpeningLineCase(item = {}) {
+  return {
+    id: item.id || "",
+    personaId: item.personaId || "",
+    personaName: item.personaName || "",
+    personaTitle: item.personaTitle || "",
+    relationship: item.relationship || "",
+    relationshipLabel: item.relationshipLabel || "",
+    setting: item.setting || "",
+    settingLabel: item.settingLabel || "",
+    goal: item.goal || openingLineGoal,
+    goalLabel: item.goalLabel || goalLabels[openingLineGoal],
+    visibleScene: item.visibleScene || "",
+    openingLine: item.openingLine || "",
+    fullText: item.fullText || "",
+    provider: item.provider || "",
+    model: item.model || "",
+    inputTokens: Number(item.inputTokens || 0),
+    outputTokens: Number(item.outputTokens || 0),
+    estimatedCostKrw: Number(item.estimatedCostKrw || 0),
+    error: item.error || ""
+  };
+}
+
+function publicOpeningLineResult(result = {}) {
+  return {
+    id: result.id || "",
+    status: result.status || "unknown",
+    provider: result.provider || "",
+    model: result.model || "",
+    total: Number(result.total || 0),
+    completed: Number(result.completed || 0),
+    failed: Number(result.failed || 0),
+    startedAt: result.startedAt || "",
+    finishedAt: result.finishedAt || "",
+    generatedAt: result.generatedAt || result.finishedAt || "",
+    cases: Array.isArray(result.cases) ? result.cases.map(publicOpeningLineCase) : []
+  };
+}
+
+function publicOpeningLineJob(job = {}, { includeCases = false } = {}) {
+  const payload = {
+    id: job.id || "",
+    status: job.status || "queued",
+    cancelRequested: Boolean(job.cancelRequested),
+    provider: job.provider || "",
+    model: job.model || "",
+    total: Number(job.total || 0),
+    completed: Number(job.completed || 0),
+    failed: Number(job.failed || 0),
+    startedAt: job.startedAt || "",
+    finishedAt: job.finishedAt || "",
+    error: job.error || ""
+  };
+  if (includeCases) payload.cases = Array.isArray(job.cases) ? job.cases.map(publicOpeningLineCase) : [];
+  return payload;
+}
+
+function recentOpeningLineJobs() {
+  return [...openingLineJobs.values()]
+    .sort((a, b) => String(b.startedAt || "").localeCompare(String(a.startedAt || "")))
+    .slice(0, 5)
+    .map((job) => publicOpeningLineJob(job));
+}
+
+async function runOpeningLineJob(jobId, actor) {
+  const job = openingLineJobs.get(jobId);
+  if (!job) return;
+  const settings = modelSettingsFor("chat");
+  job.status = "running";
+  job.provider = settings.provider;
+  job.model = settings.model;
+  job.startedAt = new Date().toISOString();
+
+  try {
+    if (settings.provider !== "anthropic") {
+      throw new Error("현재 챗봇 모델 공급자가 Anthropic이 아닙니다. 관리자 모델 설정을 Claude로 바꾼 뒤 실행하세요.");
+    }
+    assertProviderKey("anthropic");
+    const casesByPersona = new Map();
+    for (const item of job.cases) {
+      const list = casesByPersona.get(item.personaId) || [];
+      list.push(item);
+      casesByPersona.set(item.personaId, list);
+    }
+
+    for (const [personaId, caseItems] of casesByPersona) {
+      if (job.cancelRequested) {
+        job.status = "cancelled";
+        break;
+      }
+      const persona = getPersona(personaId);
+      const input = openingLineBatchInputFor(persona, caseItems);
+      try {
+        const { text, usage, model, provider } = await callModelWithUsage({
+          modelType: "chat",
+          instructions: personaPrompt,
+          input,
+          overrides: {
+            maxOutputTokens: Math.max(3200, Math.min(6000, Number(settings.maxOutputTokens || 3200))),
+            thinkingType: "disabled",
+            thinkingBudgetTokens: 0
+          }
+        });
+        const usageRecord = estimateUsage(input, text, usage);
+        const cost = estimateCost({ provider, model, modelType: "chat", ...usageRecord });
+        const generated = parseOpeningLineBatch(text);
+        const needsRepair = [];
+        for (const item of caseItems) {
+          const generatedItem = generated.get(item.id) || {};
+          const openingLine = firstOpeningSentence(generatedItem.openingLine || "");
+          if (generatedItem.visibleScene) item.visibleScene = generatedItem.visibleScene;
+          const issue = openingLine ? openingLineIssue(openingLine) : "배치 응답에서 해당 케이스 문장을 찾지 못했습니다.";
+          if (issue) needsRepair.push({ ...item, openingLine, error: issue });
+          else generated.set(item.id, { ...generatedItem, openingLine, visibleScene: generatedItem.visibleScene || item.visibleScene });
+        }
+        if (needsRepair.length) {
+          const repairInput = openingLineRepairInputFor(persona, needsRepair);
+          const repair = await callModelWithUsage({
+            modelType: "chat",
+            instructions: personaPrompt,
+            input: repairInput,
+            overrides: {
+              maxOutputTokens: Math.max(1200, Math.min(3000, Number(settings.maxOutputTokens || 3000))),
+              thinkingType: "disabled",
+              thinkingBudgetTokens: 0
+            }
+          });
+          const repaired = parseOpeningLineBatch(repair.text);
+          for (const item of needsRepair) {
+            const repairedItem = repaired.get(item.id) || {};
+            const repairedLine = firstOpeningSentence(repairedItem.openingLine || "");
+            if (repairedItem.visibleScene) item.visibleScene = repairedItem.visibleScene;
+            if (repairedLine && !openingLineIssue(repairedLine)) {
+              generated.set(item.id, {
+                openingLine: repairedLine,
+                visibleScene: repairedItem.visibleScene || item.visibleScene
+              });
+            }
+          }
+        }
+        const perCaseInputTokens = Math.round(usageRecord.inputTokens / Math.max(1, caseItems.length));
+        const perCaseOutputTokens = Math.round(usageRecord.outputTokens / Math.max(1, caseItems.length));
+        const perCaseCostKrw = Number((cost.estimatedCostKrw / Math.max(1, caseItems.length)).toFixed(2));
+        for (const item of caseItems) {
+          const generatedItem = generated.get(item.id) || {};
+          const openingLine = generatedItem.openingLine || "";
+          const issue = openingLineIssue(openingLine);
+          if (!openingLine || issue) {
+            item.error = issue || "배치 응답에서 해당 케이스 문장을 찾지 못했습니다.";
+            job.failed += 1;
+          } else {
+            item.openingLine = openingLine;
+            item.fullText = openingLine;
+          }
+          item.visibleScene = generatedItem.visibleScene || item.visibleScene || visibleSceneFor(item, persona);
+          item.provider = provider;
+          item.model = model;
+          item.inputTokens = perCaseInputTokens;
+          item.outputTokens = perCaseOutputTokens;
+          item.estimatedCostKrw = perCaseCostKrw;
+        }
+        recordUsageEvent({
+          userId: actor.id,
+          eventType: "opening_line_generation",
+          provider,
+          model,
+          modelType: "chat",
+          input,
+          output: text,
+          usage
+        });
+      } catch (error) {
+        for (const item of caseItems) item.error = error.message || "생성 실패";
+        job.failed += caseItems.length;
+      }
+      job.completed += caseItems.length;
+      await saveDb();
+    }
+    if (job.status !== "cancelled") job.status = job.failed ? "completed_with_errors" : "completed";
+  } catch (error) {
+    job.status = "failed";
+    job.error = error.message || "첫 문장 생성 작업 실패";
+  } finally {
+    job.finishedAt = new Date().toISOString();
+    const result = publicOpeningLineResult({
+      ...job,
+      generatedAt: job.finishedAt
+    });
+    db.settings = mergeSettings(db.settings, { openingLines: { latest: result } });
+    await saveDb();
+  }
+}
+
 async function handleGoogleAuth(res) {
   const clientId = globalThis.process?.env?.GOOGLE_CLIENT_ID;
   if (!clientId) {
@@ -1762,8 +2358,43 @@ async function handleAppApi(req, res, url) {
           .toLowerCase()
           .includes(q);
       })
-      .map((item) => ({ ...publicUser(item), ...userActivityStats(item.id) }));
+      .map((item) => {
+        const usage = usageSummary(db.usageEvents.filter((event) => event.userId === item.id));
+        return { ...publicUser(item), ...userActivityStats(item.id), usage };
+      });
     json(res, 200, { users: paginate(users, url.searchParams).items });
+    return true;
+  }
+
+  const adminUserIdMatch = path.match(/^\/api\/admin\/users\/([^/]+)$/);
+  if (adminUserIdMatch && req.method === "PUT") {
+    const actor = requireAdmin(req, res);
+    if (!actor) return true;
+    const targetId = decodeURIComponent(adminUserIdMatch[1]);
+    const target = db.users.find((item) => item.id === targetId);
+    if (!target) {
+      json(res, 404, { error: "사용자를 찾지 못했습니다." });
+      return true;
+    }
+    const body = await readJson(req);
+    if (body.displayName != null) {
+      const dn = String(body.displayName).trim().slice(0, 120);
+      if (dn) target.displayName = dn;
+    }
+    if (body.profile && typeof body.profile === "object") {
+      target.profile = sanitizeProfile({ ...(target.profile || {}), ...body.profile });
+    }
+    if (body.role === "admin" || body.role === "user") {
+      const adminCount = db.users.filter((item) => item.role === "admin").length;
+      if (target.role === "admin" && body.role === "user" && adminCount <= 1) {
+        json(res, 400, { error: "마지막 관리자 권한은 해제할 수 없습니다." });
+        return true;
+      }
+      target.role = body.role;
+    }
+    target.updatedAt = new Date().toISOString();
+    await saveDb();
+    json(res, 200, { user: publicUser(target) });
     return true;
   }
 
@@ -1792,7 +2423,13 @@ async function handleAppApi(req, res, url) {
   if (path === "/api/admin/usage" && req.method === "GET") {
     const user = requireAdmin(req, res);
     if (!user) return true;
-    json(res, 200, { usage: usageSummary(), events: db.usageEvents.slice(0, 50) });
+    const filtered = filterUsageEvents(db.usageEvents, url.searchParams);
+    const limit = Math.min(500, Math.max(1, Number(url.searchParams.get("limit") || 200)));
+    json(res, 200, {
+      usage: usageSummary(filtered),
+      events: filtered.slice(0, limit),
+      ...usageBreakdowns(filtered)
+    });
     return true;
   }
 
@@ -1807,9 +2444,83 @@ async function handleAppApi(req, res, url) {
     const user = requireAdmin(req, res);
     if (!user) return true;
     const body = await readJson(req);
-    db.settings = sanitizeSettings(body.settings || body);
+    db.settings = sanitizeSettings(mergeSettings(db.settings, body.settings || body));
     await saveDb();
     json(res, 200, { settings: db.settings });
+    return true;
+  }
+
+  if (path === "/api/admin/opening-lines" && req.method === "GET") {
+    const user = requireAdmin(req, res);
+    if (!user) return true;
+    json(res, 200, {
+      latest: db.settings?.openingLines?.latest || null,
+      jobs: recentOpeningLineJobs()
+    });
+    return true;
+  }
+
+  if (path === "/api/admin/opening-lines" && req.method === "POST") {
+    const user = requireAdmin(req, res);
+    if (!user) return true;
+    const settings = modelSettingsFor("chat");
+    if (settings.provider !== "anthropic") {
+      json(res, 400, { error: "현재 챗봇 모델 공급자가 Anthropic이 아닙니다. 관리자 모델 설정을 Claude로 바꾼 뒤 실행하세요." });
+      return true;
+    }
+    const running = [...openingLineJobs.values()].find((job) => ["queued", "running"].includes(job.status));
+    if (running) {
+      json(res, 200, { job: publicOpeningLineJob(running, { includeCases: true }) });
+      return true;
+    }
+    const cases = buildOpeningLineCases();
+    const job = {
+      id: randomUUID(),
+      status: "queued",
+      provider: settings.provider,
+      model: settings.model,
+      total: cases.length,
+      completed: 0,
+      failed: 0,
+      startedAt: new Date().toISOString(),
+      finishedAt: "",
+      error: "",
+      cases
+    };
+    openingLineJobs.set(job.id, job);
+    setTimeout(() => {
+      void runOpeningLineJob(job.id, user);
+    }, 0);
+    json(res, 202, { job: publicOpeningLineJob(job, { includeCases: true }) });
+    return true;
+  }
+
+  const openingLineJobMatch = path.match(/^\/api\/admin\/opening-lines\/([^/]+)$/);
+  if (openingLineJobMatch && req.method === "GET") {
+    const user = requireAdmin(req, res);
+    if (!user) return true;
+    const job = openingLineJobs.get(decodeURIComponent(openingLineJobMatch[1]));
+    if (!job) {
+      json(res, 404, { error: "첫 문장 생성 작업을 찾지 못했습니다." });
+      return true;
+    }
+    json(res, 200, { job: publicOpeningLineJob(job, { includeCases: true }) });
+    return true;
+  }
+
+  if (openingLineJobMatch && req.method === "DELETE") {
+    const user = requireAdmin(req, res);
+    if (!user) return true;
+    const job = openingLineJobs.get(decodeURIComponent(openingLineJobMatch[1]));
+    if (!job) {
+      json(res, 404, { error: "첫 문장 생성 작업을 찾지 못했습니다." });
+      return true;
+    }
+    if (["queued", "running"].includes(job.status)) {
+      job.cancelRequested = true;
+      job.status = "cancelling";
+    }
+    json(res, 200, { job: publicOpeningLineJob(job, { includeCases: true }) });
     return true;
   }
 
@@ -1822,7 +2533,15 @@ async function handleAppApi(req, res, url) {
       json(res, 404, { error: "훈련 기록을 찾지 못했습니다." });
       return true;
     }
-    json(res, 200, { conversation: publicConversation(conversation, { includeMessages: true, includeFeedback: true }) });
+    const owner = db.users.find((item) => item.id === conversation.userId);
+    json(res, 200, {
+      conversation: {
+        ...publicConversation(conversation, { includeMessages: true, includeFeedback: true }),
+        user: owner
+          ? { id: owner.id, email: owner.email || "", name: owner.profile?.name || owner.displayName || "" }
+          : null
+      }
+    });
     return true;
   }
 
@@ -1853,21 +2572,23 @@ async function handleApi(req, res, url) {
     const persona = getPersona(session.personaId);
 
     if (path === "/api/start") {
-      const input = initialPromptFor(session, persona);
-      const { text, usage, model } = await callModelWithUsage({
+      const sessionWithScene = { ...session, visibleScene: visibleSceneFor(session, persona) };
+      const input = initialPromptFor(sessionWithScene, persona);
+      const { text, usage, model, provider } = await callModelWithUsage({
         modelType: "chat",
         instructions: personaPrompt,
         input
       });
       const conversation = createConversation({
         userId: user.id,
-        session,
+        session: sessionWithScene,
         messages: [{ role: "assistant", content: text }]
       });
       recordUsageEvent({
         userId: user.id,
         conversationId: conversation.id,
         eventType: "chat_start",
+        provider,
         model,
         modelType: "chat",
         input,
@@ -1875,7 +2596,7 @@ async function handleApi(req, res, url) {
         usage
       });
       await saveDb();
-      json(res, 200, { text, conversationId: conversation.id });
+      json(res, 200, { text, conversationId: conversation.id, visibleScene: sessionWithScene.visibleScene });
       return;
     }
 
@@ -1886,7 +2607,7 @@ async function handleApi(req, res, url) {
         return;
       }
       const input = chatPromptFor(session, persona, safeMessages);
-      const { text, usage, model } = await callModelWithUsage({
+      const { text, usage, model, provider } = await callModelWithUsage({
         modelType: "chat",
         instructions: personaPrompt,
         input
@@ -1899,6 +2620,7 @@ async function handleApi(req, res, url) {
           userId: user.id,
           conversationId: conversation.id,
           eventType: "chat_message",
+          provider,
           model,
           modelType: "chat",
           input,
@@ -1927,6 +2649,7 @@ async function handleApi(req, res, url) {
       let text = "";
       let usage = {};
       let model = "";
+      let provider = "";
       try {
         const result = await callModelWithUsage({
           modelType: "feedback",
@@ -1936,6 +2659,7 @@ async function handleApi(req, res, url) {
         text = result.text;
         usage = result.usage;
         model = result.model;
+        provider = result.provider;
       } catch (error) {
         console.error("Feedback generation failed.", error);
         json(res, 502, { error: "피드백 생성에 실패했습니다. 대화 내용은 저장되어 있으니 잠시 후 다시 시도해주세요." });
@@ -1951,6 +2675,7 @@ async function handleApi(req, res, url) {
           userId: user.id,
           conversationId: conversation.id,
           eventType: "feedback",
+          provider,
           model,
           modelType: "feedback",
           input,
