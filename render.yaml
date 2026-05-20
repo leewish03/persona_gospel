@@ -28,7 +28,13 @@ services:
       - key: SESSION_SECRET
         sync: false
       - key: USD_TO_KRW
-        value: "1380"
+        value: "1480"
+      - key: EXCHANGE_RATE_API_URL
+        value: https://api.frankfurter.dev/v1/latest?base=USD&symbols=KRW
+      - key: EXCHANGE_RATE_REFRESH_MS
+        value: "21600000"
+      - key: EXCHANGE_RATE_TIMEOUT_MS
+        value: "4000"
       - key: SUPABASE_URL
         value: https://wyqpcldqlyrqbppjdhhp.supabase.co
       - key: SUPABASE_ANON_KEY
