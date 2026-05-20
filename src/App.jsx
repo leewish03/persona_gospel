@@ -379,8 +379,10 @@ function PersonaScreen({ state, actions }) {
 function ContextScreen({ state, actions }) {
   const update = (patch) => {
     actions.setContextForm((value) => ({ ...value, ...patch }));
+    actions.setErrors((value) => ({ ...value, context: "" }));
     actions.setReviewConfirmed(false);
   };
+  const contextErrorTitle = state.errors.context === "관계, 상황, 훈련 초점을 모두 선택해주세요." ? "상황 설정 필요" : "훈련 시작 실패";
   return (
     <div className="grid gap-4">
       {state.contextForm.setting ? <img className="aspect-[16/9] w-full rounded-2xl object-cover" src={settingImages[state.contextForm.setting]} alt="선택한 대화 상황" /> : null}
@@ -389,7 +391,7 @@ function ContextScreen({ state, actions }) {
           <SelectControl id="relationship" label="관계" value={state.contextForm.relationship} onChange={(relationship) => update({ relationship })} placeholder="관계 선택" options={Object.entries(relationshipText).map(([value, label]) => ({ value, label }))} />
           <SelectControl id="setting" label="상황" value={state.contextForm.setting} onChange={(setting) => update({ setting })} placeholder="상황 선택" options={Object.entries(settingText).map(([value, label]) => ({ value, label }))} />
           <SelectControl id="goal" label="훈련 초점" value={state.contextForm.goal} onChange={(goal) => update({ goal })} placeholder="훈련 초점 선택" options={Object.entries(goalText).map(([value, label]) => ({ value, label }))} />
-          {state.errors.context ? <Alert variant="destructive"><AlertCircle /><AlertTitle>상황 설정 필요</AlertTitle><AlertDescription>{state.errors.context}</AlertDescription></Alert> : null}
+          {state.errors.context ? <Alert variant="destructive"><AlertCircle /><AlertTitle>{contextErrorTitle}</AlertTitle><AlertDescription>{state.errors.context}</AlertDescription></Alert> : null}
         </CardContent>
       </Card>
     </div>
@@ -793,14 +795,14 @@ function AdminConversationDrawer({ detail, personas, onClose }) {
   const labels = conv ? sessionLabels(conv.session, personas) : null;
   return (
     <Drawer open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
-      <DrawerContent className="max-h-[90vh]">
+      <DrawerContent className="flex h-[90vh] max-h-[90vh] flex-col">
         <DrawerHeader>
           <DrawerTitle>훈련·피드백 상세</DrawerTitle>
           <DrawerDescription>
             {conv && labels ? `${labels.persona} · ${formatDate(conv.createdAt)} · ${conv.status === "finished" ? "완료" : "진행 중"}` : "관리자 권한으로 대화 전문과 피드백을 확인합니다."}
           </DrawerDescription>
         </DrawerHeader>
-        <div className="max-h-[60vh] overflow-y-auto px-4 pb-2">
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
           {detail?.loading ? <p className="text-sm text-muted-foreground">불러오는 중입니다.</p> : null}
           {detail?.error ? (
             <Alert variant="destructive">
@@ -829,8 +831,8 @@ function AdminConversationDrawer({ detail, personas, onClose }) {
                 </CardContent>
               </Card>
               <Card>
-                <CardHeader className="pb-2"><CardTitle className="text-base">피드백 리포트</CardTitle></CardHeader>
-                <CardContent className="feedback-content text-sm" dangerouslySetInnerHTML={{ __html: conv.feedbackText ? markdownToHtml(conv.feedbackText) : "<p>아직 피드백이 없습니다.</p>" }} />
+                <CardHeader className="pb-2"><CardTitle className="text-base">피드백 리포트 전문</CardTitle></CardHeader>
+                <CardContent className="feedback-content break-words pb-8 text-sm" dangerouslySetInnerHTML={{ __html: conv.feedbackText ? markdownToHtml(conv.feedbackText) : "<p>아직 피드백이 없습니다.</p>" }} />
               </Card>
             </div>
           ) : null}
