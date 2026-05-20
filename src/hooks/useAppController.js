@@ -12,6 +12,48 @@ function cleanProfile(profile = {}) {
   return { ...profileDefaults, ...profile };
 }
 
+function userMessageForError(error, context = "general") {
+  const raw = String(error?.serverMessage || error?.message || "").trim();
+  const status = Number(error?.status || 0);
+  const code = error?.code || "";
+  const lower = raw.toLowerCase();
+  const network = !status && /failed to fetch|networkerror|load failed|abort|취소/.test(lower);
+  const internal =
+    status >= 500 ||
+    /staticSystemBlocks|OPENAI_API_KEY|ANTHROPIC_API_KEY|api key|OpenAI|Claude|응답에서 텍스트|is not defined|ReferenceError|TypeError/i.test(raw);
+
+  if (network) return "네트워크 연결이 불안정합니다. 연결 상태를 확인한 뒤 다시 시도해주세요.";
+  if (code === "PROFILE_REQUIRED") return "훈련을 시작하려면 먼저 기본 정보를 입력해주세요.";
+  if (status === 401) return "로그인이 필요합니다. 다시 로그인한 뒤 이용해주세요.";
+  if (status === 403) return raw || "이 작업을 사용할 권한이 없습니다.";
+  if (status === 404) {
+    if (context === "historyDetail" || context === "adminDetail") return "해당 훈련 기록을 찾지 못했습니다. 목록을 새로고침한 뒤 다시 열어주세요.";
+    return raw || "요청한 정보를 찾지 못했습니다.";
+  }
+  if (context === "contextValidation") return "관계, 상황, 훈련 초점을 모두 선택해주세요.";
+  if (context === "start") {
+    if (internal) return "훈련을 시작하지 못했습니다. 잠시 후 다시 시도해주세요. 문제가 계속되면 관리자에게 알려주세요.";
+    return raw || "훈련을 시작하지 못했습니다. 잠시 후 다시 시도해주세요.";
+  }
+  if (context === "chat") {
+    if (internal) return "상대역 응답을 불러오지 못했습니다. 잠시 후 다시 보내주세요.";
+    return raw || "메시지를 보내지 못했습니다. 잠시 후 다시 시도해주세요.";
+  }
+  if (context === "feedback") {
+    if (internal) return "피드백을 생성하지 못했습니다. 대화 내용은 저장되어 있으니 잠시 후 다시 시도해주세요.";
+    return raw || "피드백을 생성하지 못했습니다. 잠시 후 다시 시도해주세요.";
+  }
+  if (context === "profile") return raw || "기본 정보를 저장하지 못했습니다. 입력값을 확인한 뒤 다시 시도해주세요.";
+  if (context === "auth") return raw || "로그인을 완료하지 못했습니다. 잠시 후 다시 시도해주세요.";
+  if (context === "admin" || context === "adminDetail") {
+    if (internal) return "관리자 데이터를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.";
+    return raw || "관리자 데이터를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.";
+  }
+  if (context === "history" || context === "historyDetail") return raw || "훈련 기록을 불러오지 못했습니다. 잠시 후 다시 시도해주세요.";
+  if (internal) return "요청 처리 중 문제가 발생했습니다. 잠시 후 다시 시도해주세요.";
+  return raw || "요청 처리 중 오류가 발생했습니다.";
+}
+
 export function useAppController() {
   const [personas, setPersonas] = useState([]);
   const [selectedPersonaId, setSelectedPersonaId] = useState("");
@@ -146,7 +188,7 @@ export function useAppController() {
       const [stats, data] = await Promise.all([getJson("/api/me/stats"), getJson(`/api/conversations?${query}`)]);
       setHistory((value) => ({ ...value, stats, items: data.conversations || [], filters, loading: false }));
     } catch (error) {
-      setErrors((value) => ({ ...value, global: error.message }));
+      setErrors((value) => ({ ...value, global: userMessageForError(error, "history") }));
       setHistory((value) => ({ ...value, loading: false }));
     }
   }, [history.filters]);
@@ -158,7 +200,7 @@ export function useAppController() {
       const data = await getJson(`/api/conversations/${encodeURIComponent(id)}`);
       setHistory((value) => ({ ...value, detail: data.conversation, loading: false }));
     } catch (error) {
-      setErrors((value) => ({ ...value, global: error.message }));
+      setErrors((value) => ({ ...value, global: userMessageForError(error, "historyDetail") }));
       setHistory((value) => ({ ...value, loading: false }));
     }
   }, []);
@@ -193,7 +235,7 @@ export function useAppController() {
         data: { summary, users, conversations, usage, settings }
       }));
     } catch (error) {
-      setErrors((value) => ({ ...value, global: error.message }));
+      setErrors((value) => ({ ...value, global: userMessageForError(error, "admin") }));
       setAdmin((value) => ({ ...value, loading: false }));
     }
   }, [admin.filters, isAdmin]);
@@ -212,10 +254,11 @@ export function useAppController() {
         conversationDetail: { id, loading: false, conversation: data.conversation, error: "" }
       }));
     } catch (error) {
-      setErrors((value) => ({ ...value, global: error.message }));
+      const message = userMessageForError(error, "adminDetail");
+      setErrors((value) => ({ ...value, global: message }));
       setAdmin((value) => ({
         ...value,
-        conversationDetail: { id, loading: false, conversation: null, error: error.message || "불러오기 실패" }
+        conversationDetail: { id, loading: false, conversation: null, error: message }
       }));
     }
   }, [isAdmin]);
@@ -284,7 +327,7 @@ export function useAppController() {
         }
       }
     } catch (error) {
-      setErrors((value) => ({ ...value, global: error.message }));
+      setErrors((value) => ({ ...value, global: userMessageForError(error, "admin") }));
       setAdmin((value) =>
         value.userEditor ? { ...value, userEditor: { ...value.userEditor, saving: false } } : value
       );
@@ -321,7 +364,7 @@ export function useAppController() {
           setCurrentScreen("login");
         }
       } catch (error) {
-        setErrors((value) => ({ ...value, global: error.message }));
+        setErrors((value) => ({ ...value, global: userMessageForError(error) }));
       }
     }
     void init();
@@ -334,7 +377,7 @@ export function useAppController() {
 
   const validateContext = useCallback(() => {
     if (contextForm.relationship && contextForm.setting && contextForm.goal) return true;
-    setErrors((value) => ({ ...value, context: "관계, 상황, 훈련 초점을 모두 선택해주세요." }));
+    setErrors((value) => ({ ...value, context: userMessageForError(null, "contextValidation") }));
     return false;
   }, [contextForm]);
 
@@ -350,7 +393,7 @@ export function useAppController() {
       setAuth((value) => ({ ...value, user: data.user }));
       goTo("home", { replace: true });
     } catch (error) {
-      setErrors((value) => ({ ...value, profile: error.message }));
+      setErrors((value) => ({ ...value, profile: userMessageForError(error, "profile") }));
     } finally {
       setIsBusy(false);
     }
@@ -364,7 +407,7 @@ export function useAppController() {
       fillProfileForm(data.user);
       setCurrentScreen(data.user.profileComplete ? "home" : "profile");
     } catch (error) {
-      setErrors((value) => ({ ...value, auth: error.message }));
+      setErrors((value) => ({ ...value, auth: userMessageForError(error, "auth") }));
     }
   }, [fillProfileForm]);
 
@@ -397,7 +440,7 @@ export function useAppController() {
       setActiveSession(null);
       setMessages([]);
       setWaitingForAssistant(false);
-      setErrors((value) => ({ ...value, context: error.message }));
+      setErrors((value) => ({ ...value, context: userMessageForError(error, "start") }));
       setCurrentScreen("context");
     } finally {
       setIsBusy(false);
@@ -420,7 +463,7 @@ export function useAppController() {
       setMessages([...nextMessages, { role: "assistant", content: data.text }]);
       setWaitingForAssistant(false);
     } catch (error) {
-      setMessages([...nextMessages, { role: "system", content: error.message }]);
+      setMessages([...nextMessages, { role: "system", content: userMessageForError(error, "chat") }]);
       setWaitingForAssistant(false);
     } finally {
       setIsBusy(false);
@@ -456,7 +499,7 @@ export function useAppController() {
       setSessionStarted(false);
     } catch (error) {
       setLatestFeedbackText("");
-      setFeedbackError(error.message || "피드백 생성에 실패했습니다.");
+      setFeedbackError(userMessageForError(error, "feedback"));
       setSessionStarted(true);
     } finally {
       setIsBusy(false);
@@ -533,7 +576,7 @@ export function useAppController() {
       }
       resumeConversation(data.conversation);
     } catch (error) {
-      setErrors((value) => ({ ...value, global: error.message }));
+      setErrors((value) => ({ ...value, global: userMessageForError(error, "historyDetail") }));
     } finally {
       setIsBusy(false);
     }

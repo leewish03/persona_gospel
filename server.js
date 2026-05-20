@@ -910,6 +910,14 @@ function requireAdmin(req, res) {
   return user;
 }
 
+function publicServerError(error) {
+  console.error(error);
+  return {
+    error: "요청 처리 중 문제가 발생했습니다. 잠시 후 다시 시도해주세요.",
+    code: "INTERNAL_ERROR"
+  };
+}
+
 function publicConversation(conversation, { includeMessages = false, includeFeedback = false } = {}) {
   const payload = {
     id: conversation.id,
@@ -3270,7 +3278,7 @@ async function handleApi(req, res, url) {
 
     json(res, 404, { error: "Unknown API route." });
   } catch (error) {
-    json(res, 500, { error: error.message || "알 수 없는 오류가 발생했습니다." });
+    json(res, 500, publicServerError(error));
   }
 }
 
