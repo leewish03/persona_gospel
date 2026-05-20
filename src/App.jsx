@@ -310,8 +310,8 @@ function HomeScreen({ state, actions }) {
       >
         <div>
           <Badge variant="secondary" className="mb-3 bg-white/90 text-stone-900">Mobile Training</Badge>
-          <h2 className="text-[clamp(1.65rem,8vw,2.6rem)] font-black leading-tight">전도 대화,<br />AI와 먼저 연습해보세요</h2>
-          <p className="mt-3 max-w-sm text-sm leading-6 text-white/85">실제 전도 상황을 AI 페르소나와 연습하고, 대화 후 피드백 리포트로 더 나은 질문과 전달 방식을 점검하세요.</p>
+          <h2 className="text-[clamp(1.65rem,8vw,2.6rem)] font-black leading-tight">복음 전도 대화,<br />AI와 먼저 연습해보세요</h2>
+          <p className="mt-3 max-w-sm text-sm leading-6 text-white/85">실제 전도 상황을 AI 페르소나와 연습하고, 대화 후 피드백 리포트로 더 나은 질문과 복음 전달 방식을 점검하세요.</p>
           {state.hasUser ? <p className="mt-3 text-xs font-semibold text-white/70">{state.auth.user.profile?.name || state.auth.user.displayName}님, 이어서 훈련할 수 있습니다.</p> : null}
         </div>
         <Button className="h-12 rounded-full bg-primary text-base font-black shadow-2xl hover:bg-primary/90" onClick={actions.handlePrimaryAction}>
