@@ -1105,6 +1105,17 @@ function extractText(response) {
   return parts.join("\n").trim();
 }
 
+function incompleteResponseError(provider, reason = "") {
+  const error = new Error(`${provider} 응답이 완료되지 않았습니다.${reason ? ` reason=${reason}` : ""}`);
+  error.code = "MODEL_RESPONSE_INCOMPLETE";
+  error.reason = reason;
+  return error;
+}
+
+function isMaxOutputIncomplete(error) {
+  return error?.code === "MODEL_RESPONSE_INCOMPLETE" && error.reason === "max_output_tokens";
+}
+
 function extractAnthropicText(response) {
   return (response.content || [])
     .filter((block) => block?.type === "text" && typeof block.text === "string")
@@ -1288,12 +1299,12 @@ async function callOpenAIWithUsage({
     throw new Error(message);
   }
 
+  if (data?.status === "incomplete") {
+    throw incompleteResponseError("OpenAI", data?.incomplete_details?.reason || "");
+  }
+
   const text = extractText(data);
   if (!text) {
-    const reason = data?.incomplete_details?.reason;
-    if (data?.status === "incomplete" && reason) {
-      throw new Error(`OpenAI 응답이 완료되지 않았습니다. reason=${reason}`);
-    }
     throw new Error("OpenAI 응답에서 텍스트를 찾지 못했습니다.");
   }
   return { text, usage: normalizeUsage(data.usage) };
@@ -1304,6 +1315,8 @@ async function callAnthropicWithUsage({
   model,
   instructions,
   input,
+  staticSystemBlocks = [],
+  cacheStaticSystem = false,
   maxOutputTokens = 900,
   temperature = "",
   topP = "",
@@ -3206,11 +3219,23 @@ async function handleApi(req, res, url) {
       let model = "";
       let provider = "";
       try {
-        const result = await callModelWithUsage({
-          modelType: "feedback",
-          instructions: feedbackPrompt,
-          input
-        });
+        let result;
+        try {
+          result = await callModelWithUsage({
+            modelType: "feedback",
+            instructions: feedbackPrompt,
+            input
+          });
+        } catch (error) {
+          if (!isMaxOutputIncomplete(error)) throw error;
+          const currentMax = Number(modelSettingsFor("feedback").maxOutputTokens || defaultSettings.ai.feedback.maxOutputTokens || 2600);
+          result = await callModelWithUsage({
+            modelType: "feedback",
+            instructions: feedbackPrompt,
+            input,
+            overrides: { maxOutputTokens: Math.min(64000, Math.max(5200, currentMax * 2)) }
+          });
+        }
         text = result.text;
         usage = result.usage;
         model = result.model;
