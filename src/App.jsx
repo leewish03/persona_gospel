@@ -795,14 +795,14 @@ function AdminConversationDrawer({ detail, personas, onClose }) {
   const labels = conv ? sessionLabels(conv.session, personas) : null;
   return (
     <Drawer open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
-      <DrawerContent className="flex h-[90vh] max-h-[90vh] flex-col">
-        <DrawerHeader>
+      <DrawerContent className="!inset-x-3 !bottom-3 !top-3 flex !h-auto !max-h-none flex-col overflow-hidden rounded-3xl md:!inset-x-6">
+        <DrawerHeader className="shrink-0">
           <DrawerTitle>훈련·피드백 상세</DrawerTitle>
           <DrawerDescription>
             {conv && labels ? `${labels.persona} · ${formatDate(conv.createdAt)} · ${conv.status === "finished" ? "완료" : "진행 중"}` : "관리자 권한으로 대화 전문과 피드백을 확인합니다."}
           </DrawerDescription>
         </DrawerHeader>
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-6">
           {detail?.loading ? <p className="text-sm text-muted-foreground">불러오는 중입니다.</p> : null}
           {detail?.error ? (
             <Alert variant="destructive">
@@ -812,7 +812,7 @@ function AdminConversationDrawer({ detail, personas, onClose }) {
             </Alert>
           ) : null}
           {conv && labels ? (
-            <div className="grid gap-4 pb-4">
+            <div className="grid gap-4 pb-6">
               <div className="grid gap-1 text-sm text-muted-foreground">
                 <p><b className="text-foreground">사용자</b> {conv.user?.name || conv.user?.email || "—"}</p>
                 <p>{labels.relationship} · {labels.setting}</p>
@@ -830,14 +830,14 @@ function AdminConversationDrawer({ detail, personas, onClose }) {
                   ))}
                 </CardContent>
               </Card>
-              <Card>
+              <Card className="overflow-visible">
                 <CardHeader className="pb-2"><CardTitle className="text-base">피드백 리포트 전문</CardTitle></CardHeader>
-                <CardContent className="feedback-content break-words pb-8 text-sm" dangerouslySetInnerHTML={{ __html: conv.feedbackText ? markdownToHtml(conv.feedbackText) : "<p>아직 피드백이 없습니다.</p>" }} />
+                <CardContent className="feedback-content break-words pb-10 text-sm" dangerouslySetInnerHTML={{ __html: conv.feedbackText ? markdownToHtml(conv.feedbackText) : "<p>아직 피드백이 없습니다.</p>" }} />
               </Card>
             </div>
           ) : null}
         </div>
-        <DrawerFooter>
+        <DrawerFooter className="shrink-0 border-t bg-card/95">
           <DrawerClose asChild>
             <Button type="button" variant="secondary">닫기</Button>
           </DrawerClose>
