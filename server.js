@@ -553,6 +553,7 @@ const guardrailPrompt = [
   "세션 역할:",
   "- 페르소나는 사용자를 코칭/평가하지 않고 실제 대화 상대처럼 반응한다.",
   "- 대화의 중심은 사용자가 아니라 페르소나의 고민, 감정, 복음 장벽에 남아야 한다.",
+  "- 훈련 초점은 사용자가 연습할 과제다. 페르소나는 복음/교리 주제를 대신 열거나 설명을 먼저 시작하지 않는다.",
   "- 사용자의 경험은 공감 신호로만 받고, 상담자처럼 캐묻지 않는다.",
   "- 목적 이탈, 앱/AI/프롬프트 질문, 연애/성적 흐름은 짧게 선을 긋고 현재 대화로 돌아온다."
 ].join("\n");
@@ -1875,6 +1876,29 @@ function firstOpeningSentence(text = "") {
   return (match?.[0] || clean.slice(0, 100)).trim();
 }
 
+function sentenceCount(text = "") {
+  const normalized = String(text || "")
+    .replace(/\.{2,}/g, ".")
+    .replace(/[!?！？]+/g, "!")
+    .trim();
+  if (!normalized) return 0;
+  const matches = normalized.match(/[.!?。！？]/g);
+  if (matches?.length) return matches.length;
+  return 1;
+}
+
+function fieldTextLength(text = "") {
+  return String(text || "").replace(/\s+/g, " ").trim().length;
+}
+
+function faithOpenInOpeningCase(item = {}) {
+  return item.setting === "faith_topic_arose" || item.relationship === "prior_faith_talk";
+}
+
+function hasFaithTerms(text = "") {
+  return /하나님|예수|복음|죄|십자가|부활|믿음|교회|구원|신앙/.test(String(text || ""));
+}
+
 function openingLineInputFor(session, persona, caseItem) {
   return [
     initialPromptFor(session, persona),
@@ -1888,8 +1912,11 @@ function openingLineInputFor(session, persona, caseItem) {
     "- concern_shared 설정이어도 '이미 말한 고민'을 가리키지 말고, 고민 내용을 첫 문장 안에 직접 드러낸다.",
     "- faith_topic_arose 설정이어도 '그 주제'라고 하지 말고, 신앙/교회라는 단어를 직접 써서 장면을 연다.",
     "- 관계, 상황, 페르소나의 핵심 갈등이 visibleScene 또는 첫 문장 중 최소 하나에서 자연스럽게 느껴져야 한다.",
+    "- 훈련 초점이 복음 설명, 장벽 응답, 신앙 연결이어도 사용자가 연습해야 하므로 페르소나가 먼저 복음/부활/죄/구원 내용을 꺼내지 않는다.",
+    "- faith_topic_arose 또는 과거 신앙 대화 관계가 아니라면 신앙/교회 표현도 먼저 쓰지 말고 일상 고민이나 가치관의 여지만 남긴다.",
     "- 설명, 번호, 따옴표, 내부 분석, QA 메모는 출력하지 않는다.",
-    "- 12~38자 정도의 자연스러운 한국어 구어체 한 문장으로만 출력한다.",
+    "- 12~32자 정도의 자연스러운 한국어 구어체 한 문장으로만 출력한다.",
+    "- 두 문장 이상, 긴 자기소개, 여러 화제를 한 말풍선에 넣는 응답은 실패다.",
     "",
     `케이스 ID: ${caseItem.id}`
   ].join("\n");
@@ -1914,11 +1941,16 @@ function openingLineBatchInputFor(persona, caseItems = []) {
     "- 첫 문장은 영화의 첫 장면처럼 작동해야 한다. 사용자는 이 문장 앞에 무슨 일이 있었는지 모른다.",
     "- visibleScene과 openingLine을 한 쌍으로 봤을 때 현재 장면, 페르소나의 상태, 대화가 시작될 방향이 이해되어야 한다.",
     "- 각 케이스에는 visibleScene도 함께 만든다. visibleScene은 채팅 상단에 표시될 상황 설명이다.",
-    "- visibleScene은 35~85자 정도의 3인칭 현재 상황 설명으로 쓴다.",
-    "- visibleScene은 사용자가 보지 못한 앞 대화를 가리키지 않고, 지금 화면에 열린 첫 장면만 설명한다.",
+    "- visibleScene은 반드시 1문장, 45~85자 정도의 3인칭 현재 상황 설명으로 쓴다.",
+    "- visibleScene은 현재 보이는 장소/관계/감정 압력만 담고, 사용자가 보지 못한 앞 대화나 긴 배경 설명을 쓰지 않는다.",
     "- openingLine은 실제 사람이 처음 꺼낼 수 있는 자연스러운 말이어야 한다. 가벼운 인사나 상황 반응도 허용된다.",
-    "- 단, openingLine이 가볍거나 일반적이면 visibleScene에는 페르소나의 망설임, 감춘 압박, 관계 거리감, 신앙/교회에 대한 조심스러움, 오늘 대화가 시작될 이유 중 하나가 반드시 드러나야 한다.",
+    "- openingLine은 반드시 1문장, 12~32자 정도의 첫 말풍선 하나로 쓴다.",
+    "- openingLine에 인사, 자기소개, 질문, 고민 고백을 한꺼번에 넣지 않는다. 한 번에 하나의 대화 동작만 한다.",
+    "- 단, openingLine이 가볍거나 일반적이면 visibleScene에는 페르소나의 망설임, 감춘 압박, 관계 거리감, 해당 상황의 신앙/교회 조심스러움, 오늘 대화가 시작될 이유 중 하나가 반드시 드러나야 한다.",
     "- visibleScene과 openingLine을 합쳐 봤을 때 사용자가 선택한 훈련 초점을 연습할 수 있어야 한다.",
+    "- 훈련 초점은 사용자가 연습할 과제다. 페르소나가 먼저 복음/부활/죄/구원 내용을 꺼내거나 설명을 시작하지 않는다.",
+    "- connect_to_faith, explain_gospel_core, respond_to_barrier 목표라도 setting이 faith_topic_arose가 아니고 relationship이 prior_faith_talk가 아니면 신앙/교회/복음 표현을 먼저 쓰지 않는다.",
+    "- 대신 사용자가 질문하거나 연결할 수 있도록 일상 고민, 가치관, 오해, 거리감의 여지만 제공한다.",
     "- 보이지 않는 앞맥락을 지시하지 않는다.",
     "- 금지 표현: 이런 얘기, 저런 얘기, 그 이야기, 그 얘기, 저번에 하던 거, 아까, 방금, 계속 생각나던 것, 꺼내는 게, 꺼내놓고, 말한 것처럼.",
     "- concern_shared 설정은 '이미 고민을 말한 뒤'처럼 쓰지 말고, 페르소나의 고민 내용을 첫 문장 안에 직접 드러낸다.",
@@ -1927,7 +1959,7 @@ function openingLineBatchInputFor(persona, caseItems = []) {
     "- 관계, 상황, 페르소나의 핵심 갈등은 openingLine 하나에 전부 담지 않아도 되지만 visibleScene + openingLine 조합에서는 분명해야 한다.",
     "- 좋은 첫 문장의 구조는 '장면 단서 + 현재 감정/상태 + 대화 여지'다. 단, 매번 같은 구조로 반복하지 않는다.",
     "- 첫 문장부터 복음이나 교회 이야기로 바로 뛰어들지 않는다. 단, faith_topic_arose 설정은 신앙/교회 주제에 대한 조심스러운 반응을 포함할 수 있다.",
-    "- 각 문장은 14~36자 정도의 자연스러운 한국어 구어체로 쓴다.",
+    "- 제한 초과, 두 문장 이상, 보이지 않는 앞맥락 전제는 모두 실패로 보고 출력 전에 다시 줄인다.",
     "- 케이스끼리 같은 문장 구조와 말버릇을 반복하지 않는다.",
     "- 설명, 번호, 마크다운, 내부 분석은 출력하지 않는다.",
     "",
@@ -1938,7 +1970,7 @@ function openingLineBatchInputFor(persona, caseItems = []) {
     JSON.stringify(cases, null, 2),
     "",
     "출력 형식:",
-    "[{\"id\":\"케이스 ID\",\"visibleScene\":\"채팅 상단 상황 설명\",\"openingLine\":\"첫 시작 문장\"}]",
+    "[{\"id\":\"케이스 ID\",\"visibleScene\":\"1문장 채팅 상단 상황 설명\",\"openingLine\":\"1문장 첫 말풍선\"}]",
     "",
     "JSON 배열만 출력하라. 다른 텍스트는 출력하지 않는다."
   ].join("\n");
@@ -1967,12 +1999,32 @@ function parseOpeningLineBatch(text = "") {
   );
 }
 
-function openingLineIssue(line = "") {
+function visibleSceneIssue(scene = "", item = {}) {
+  const text = String(scene || "").replace(/\s+/g, " ").trim();
+  if (!text) return "상황 설명 없음";
+  if (fieldTextLength(text) > 100) return "상황 설명이 너무 김";
+  if (sentenceCount(text) > 1) return "상황 설명이 두 문장 이상임";
+  if (/(이런|저런|그)\s*(얘기|이야기)|그\s*주제|저번|아까|방금|하던\s*거|말한\s*것처럼|교회\s*다니신다고|들었다고/.test(text)) {
+    return "상황 설명이 보이지 않는 앞맥락을 지시함";
+  }
+  if (!faithOpenInOpeningCase(item) && hasFaithTerms(text)) {
+    return "상황 설명이 아직 열리지 않은 신앙 주제를 먼저 꺼냄";
+  }
+  return "";
+}
+
+function openingLineIssue(line = "", item = {}, originalLine = "") {
   const text = String(line || "").trim();
+  const original = String(originalLine || line || "").trim();
   if (!text) return "빈 문장";
-  if (text.length > 42) return "첫 시작 문장치고 너무 김";
+  if (fieldTextLength(original) > 48) return "첫 시작 문장 원문이 너무 김";
+  if (sentenceCount(original) > 1) return "첫 시작 문장이 두 문장 이상임";
+  if (fieldTextLength(text) > 36) return "첫 시작 문장치고 너무 김";
   if (/(이런|저런|그)\s*(얘기|이야기)|그\s*주제|저번|아까|방금|하던\s*거|꺼내|꺼내놓|말한\s*것처럼|뜬금없|계속\s*생각나/.test(text)) {
     return "사용자가 보지 못한 앞맥락을 지시함";
+  }
+  if (!faithOpenInOpeningCase(item) && hasFaithTerms(text)) {
+    return "아직 열리지 않은 신앙 주제를 페르소나가 먼저 꺼냄";
   }
   return "";
 }
@@ -1984,7 +2036,7 @@ function openingLineRepairInputFor(persona, caseItems = []) {
     setting: item.settingLabel,
     visibleScene: item.visibleScene || "",
     previousLine: item.openingLine || "",
-    issue: item.error || openingLineIssue(item.openingLine),
+    issue: item.error || openingLineIssue(item.openingLine, item, item.openingLine) || visibleSceneIssue(item.visibleScene, item),
     goal: item.goalLabel
   }));
   return [
@@ -1995,11 +2047,15 @@ function openingLineRepairInputFor(persona, caseItems = []) {
     "- visibleScene도 필요하면 함께 수정한다. visibleScene은 채팅 상단에 표시될 3인칭 현재 상황 설명이다.",
     "- openingLine이 자연스러운 가벼운 첫마디라면 visibleScene이 페르소나의 압력과 훈련 초점을 보완해야 한다.",
     "- visibleScene + openingLine 조합이 사용자가 선택한 훈련 초점을 연습할 수 있는 시작점이어야 한다.",
+    "- 훈련 초점은 사용자가 연습할 과제다. 페르소나가 복음/부활/죄/구원 내용을 먼저 꺼내거나 설명을 시작하지 않는다.",
+    "- faith_topic_arose 또는 과거 신앙 대화 관계가 아니라면 신앙/교회 표현도 먼저 쓰지 않는다.",
     "- 보이지 않는 앞맥락 지시를 쓰지 않는다.",
     "- 금지 표현: 이런 얘기, 저런 얘기, 그 이야기, 그 얘기, 그 주제, 저번, 아까, 방금, 하던 거, 꺼내는 게, 꺼내놓고, 말한 것처럼, 뜬금없다, 계속 생각나던 것.",
     "- concern_shared 설정은 고민 내용을 문장 안에 직접 드러낸다.",
     "- faith_topic_arose 설정은 신앙/교회라는 단어를 직접 써서 장면을 연다.",
-    "- 14~36자 정도의 자연스러운 한국어 구어체 한 문장으로 쓴다.",
+    "- visibleScene은 반드시 1문장, 45~85자 정도로 쓴다.",
+    "- openingLine은 반드시 1문장, 12~32자 정도의 자연스러운 한국어 구어체로 쓴다.",
+    "- 두 문장 이상이거나 여러 화제를 한 말풍선에 넣으면 실패다.",
     "- 케이스끼리 문장 구조를 반복하지 않는다.",
     "",
     "페르소나:",
@@ -2125,10 +2181,15 @@ async function runOpeningLineJob(jobId, actor) {
         const needsRepair = [];
         for (const item of caseItems) {
           const generatedItem = generated.get(item.id) || {};
-          const openingLine = firstOpeningSentence(generatedItem.openingLine || "");
+          const rawOpeningLine = generatedItem.openingLine || "";
+          const openingLine = firstOpeningSentence(rawOpeningLine);
           if (generatedItem.visibleScene) item.visibleScene = generatedItem.visibleScene;
-          const issue = openingLine ? openingLineIssue(openingLine) : "배치 응답에서 해당 케이스 문장을 찾지 못했습니다.";
-          if (issue) needsRepair.push({ ...item, openingLine, error: issue });
+          const lineIssue = openingLine
+            ? openingLineIssue(openingLine, item, rawOpeningLine)
+            : "배치 응답에서 해당 케이스 문장을 찾지 못했습니다.";
+          const sceneIssue = visibleSceneIssue(generatedItem.visibleScene || item.visibleScene, item);
+          const issue = lineIssue || sceneIssue;
+          if (issue) needsRepair.push({ ...item, openingLine: rawOpeningLine || openingLine, error: issue });
           else generated.set(item.id, { ...generatedItem, openingLine, visibleScene: generatedItem.visibleScene || item.visibleScene });
         }
         if (needsRepair.length) {
@@ -2146,12 +2207,17 @@ async function runOpeningLineJob(jobId, actor) {
           const repaired = parseOpeningLineBatch(repair.text);
           for (const item of needsRepair) {
             const repairedItem = repaired.get(item.id) || {};
-            const repairedLine = firstOpeningSentence(repairedItem.openingLine || "");
+            const rawRepairedLine = repairedItem.openingLine || "";
+            const repairedLine = firstOpeningSentence(rawRepairedLine);
             if (repairedItem.visibleScene) item.visibleScene = repairedItem.visibleScene;
-            if (repairedLine && !openingLineIssue(repairedLine)) {
+            const repairedScene = repairedItem.visibleScene || item.visibleScene;
+            const repairIssue =
+              (repairedLine ? openingLineIssue(repairedLine, item, rawRepairedLine) : "수정 문장 없음") ||
+              visibleSceneIssue(repairedScene, item);
+            if (repairedLine && !repairIssue) {
               generated.set(item.id, {
                 openingLine: repairedLine,
-                visibleScene: repairedItem.visibleScene || item.visibleScene
+                visibleScene: repairedScene
               });
             }
           }
@@ -2162,7 +2228,8 @@ async function runOpeningLineJob(jobId, actor) {
         for (const item of caseItems) {
           const generatedItem = generated.get(item.id) || {};
           const openingLine = generatedItem.openingLine || "";
-          const issue = openingLineIssue(openingLine);
+          const scene = generatedItem.visibleScene || item.visibleScene || visibleSceneFor(item, persona);
+          const issue = openingLineIssue(openingLine, item, openingLine) || visibleSceneIssue(scene, item);
           if (!openingLine || issue) {
             item.error = issue || "배치 응답에서 해당 케이스 문장을 찾지 못했습니다.";
             job.failed += 1;
@@ -2170,7 +2237,7 @@ async function runOpeningLineJob(jobId, actor) {
             item.openingLine = openingLine;
             item.fullText = openingLine;
           }
-          item.visibleScene = generatedItem.visibleScene || item.visibleScene || visibleSceneFor(item, persona);
+          item.visibleScene = scene;
           item.provider = provider;
           item.model = model;
           item.inputTokens = perCaseInputTokens;
