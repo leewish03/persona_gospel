@@ -1,6 +1,12 @@
 async function parseJson(response) {
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || "요청 처리 중 오류가 발생했습니다.");
+  if (!response.ok) {
+    const error = new Error(data.error || "요청 처리 중 오류가 발생했습니다.");
+    error.status = response.status;
+    error.code = data.code || "";
+    error.serverMessage = data.error || "";
+    throw error;
+  }
   return data;
 }
 
