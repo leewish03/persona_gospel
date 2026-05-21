@@ -160,6 +160,7 @@ function emptyDb() {
     users: [],
     conversations: [],
     usageEvents: [],
+    appFeedbacks: [],
     settings: structuredClone(defaultSettings)
   };
 }
@@ -180,6 +181,7 @@ async function loadDb() {
       users: Array.isArray(data.users) ? data.users : [],
       conversations: Array.isArray(data.conversations) ? data.conversations : [],
       usageEvents: Array.isArray(data.usageEvents) ? data.usageEvents : [],
+      appFeedbacks: Array.isArray(data.appFeedbacks) ? data.appFeedbacks : [],
       settings: mergeSettings(empty.settings, data.settings || {})
     };
   } catch {
@@ -619,13 +621,36 @@ function appUsageToSupabase(event) {
   };
 }
 
+function supabaseAppFeedbackToApp(row) {
+  return {
+    id: row.id,
+    userId: row.user_id || "",
+    message: row.message || "",
+    page: row.page || "",
+    userAgent: row.user_agent || "",
+    createdAt: row.created_at
+  };
+}
+
+function appFeedbackToSupabase(feedback) {
+  return {
+    id: feedback.id,
+    user_id: feedback.userId || null,
+    message: feedback.message || "",
+    page: feedback.page || "",
+    user_agent: feedback.userAgent || "",
+    created_at: feedback.createdAt
+  };
+}
+
 async function loadSupabaseDb() {
-  const [users, conversations, messages, usageEvents, settingsRows] = await Promise.all([
+  const [users, conversations, messages, usageEvents, settingsRows, appFeedbacks] = await Promise.all([
     supabaseRequest("app_users?select=*"),
     supabaseRequest("conversations?select=*&order=created_at.desc"),
     supabaseRequest("conversation_messages?select=*&order=sort_order.asc"),
     supabaseRequest("usage_events?select=*&order=created_at.desc&limit=5000"),
-    supabaseRequest("app_settings?select=*")
+    supabaseRequest("app_settings?select=*"),
+    supabaseRequest("app_feedbacks?select=*&order=created_at.desc&limit=1000")
   ]);
 
   const messagesByConversation = new Map();
@@ -644,6 +669,7 @@ async function loadSupabaseDb() {
     users: (users || []).map(supabaseUserToApp),
     conversations: (conversations || []).map((row) => supabaseConversationToApp(row, messagesByConversation.get(row.id) || [])),
     usageEvents: (usageEvents || []).map(supabaseUsageToApp),
+    appFeedbacks: (appFeedbacks || []).map(supabaseAppFeedbackToApp),
     settings
   };
 }
@@ -658,6 +684,9 @@ async function saveSupabaseDb() {
   }
   if (db.usageEvents.length) {
     await supabaseRequest("usage_events?on_conflict=id", { method: "POST", body: db.usageEvents.map(appUsageToSupabase) });
+  }
+  if (db.appFeedbacks?.length) {
+    await supabaseRequest("app_feedbacks?on_conflict=id", { method: "POST", body: db.appFeedbacks.map(appFeedbackToSupabase) });
   }
   await supabaseRequest("app_settings?on_conflict=key", {
     method: "POST",
@@ -895,6 +924,23 @@ function publicUser(user) {
     profile,
     profileComplete: isProfileComplete(profile),
     createdAt: user.createdAt
+  };
+}
+
+function publicAppFeedback(feedback, { includeUser = false } = {}) {
+  const owner = includeUser ? db.users.find((user) => user.id === feedback.userId) : null;
+  return {
+    id: feedback.id,
+    message: feedback.message || "",
+    page: feedback.page || "",
+    createdAt: feedback.createdAt,
+    user: owner
+      ? {
+          id: owner.id,
+          email: owner.email || "",
+          name: owner.profile?.name || owner.displayName || ""
+        }
+      : null
   };
 }
 
@@ -3025,6 +3071,33 @@ async function handleAppApi(req, res, url) {
     return true;
   }
 
+  if (path === "/api/app-feedback" && req.method === "POST") {
+    const user = requireUser(req, res);
+    if (!user) return true;
+    const body = await readJson(req);
+    const message = String(body.message || "").trim();
+    if (message.length < 2) {
+      json(res, 400, { error: "피드백 내용을 2자 이상 입력해주세요." });
+      return true;
+    }
+    if (message.length > 2000) {
+      json(res, 400, { error: "피드백은 2000자 이내로 입력해주세요." });
+      return true;
+    }
+    const feedback = {
+      id: randomUUID(),
+      userId: user.id,
+      message,
+      page: String(body.page || "").trim().slice(0, 80),
+      userAgent: String(req.headers["user-agent"] || "").slice(0, 500),
+      createdAt: new Date().toISOString()
+    };
+    db.appFeedbacks = [feedback, ...(db.appFeedbacks || [])].slice(0, 1000);
+    await saveDb();
+    json(res, 201, { feedback: publicAppFeedback(feedback) });
+    return true;
+  }
+
   if (path === "/api/conversations" && req.method === "GET") {
     const user = requireUser(req, res);
     if (!user) return true;
@@ -3217,6 +3290,18 @@ async function handleAppApi(req, res, url) {
     return true;
   }
 
+  if (path === "/api/admin/app-feedbacks" && req.method === "GET") {
+    const user = requireAdmin(req, res);
+    if (!user) return true;
+    const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit") || 100)));
+    const feedbacks = [...(db.appFeedbacks || [])]
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+      .slice(0, limit)
+      .map((feedback) => publicAppFeedback(feedback, { includeUser: true }));
+    json(res, 200, { feedbacks });
+    return true;
+  }
+
   if (path === "/api/admin/settings" && req.method === "GET") {
     const user = requireAdmin(req, res);
     if (!user) return true;
@@ -3344,6 +3429,7 @@ async function handleAppApi(req, res, url) {
       users: db.users.map(publicUser),
       conversations: db.conversations.map((conversation) => publicConversation(conversation, { includeHidden: true })),
       usage: usageSummary(),
+      appFeedbacks: (db.appFeedbacks || []).map((feedback) => publicAppFeedback(feedback, { includeUser: true })),
       settings: db.settings
     });
     return true;

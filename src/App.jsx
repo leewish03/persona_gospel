@@ -703,6 +703,39 @@ function SettingsScreen({ state, actions }) {
       </Card>
       <Card>
         <CardHeader>
+          <CardTitle>앱 피드백</CardTitle>
+          <CardDescription>불편한 점이나 개선 아이디어를 바로 남겨주세요.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3">
+          <Textarea
+            value={state.appFeedbackForm}
+            onChange={(event) => actions.setAppFeedbackForm(event.target.value)}
+            placeholder="예: 피드백 화면에서 이런 점이 헷갈렸어요."
+            maxLength={2000}
+            rows={4}
+          />
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs text-muted-foreground">{state.appFeedbackForm.length}/2000</span>
+            <Button
+              type="button"
+              className="rounded-full"
+              disabled={state.isBusy || state.appFeedbackForm.trim().length < 2}
+              onClick={() => void actions.submitAppFeedback()}
+            >
+              보내기
+            </Button>
+          </div>
+          {state.appFeedbackNotice ? (
+            <Alert variant={state.appFeedbackNotice.includes("보냈습니다") ? "default" : "destructive"}>
+              {state.appFeedbackNotice.includes("보냈습니다") ? <CheckCircle2 /> : <AlertCircle />}
+              <AlertTitle>{state.appFeedbackNotice.includes("보냈습니다") ? "전송 완료" : "전송 실패"}</AlertTitle>
+              <AlertDescription>{state.appFeedbackNotice}</AlertDescription>
+            </Alert>
+          ) : null}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
           <CardTitle>문의</CardTitle>
           <CardDescription>오류, 제안, 협력 문의는 아래 이메일로 연락해주세요.</CardDescription>
         </CardHeader>
@@ -722,7 +755,7 @@ function AdminScreen({ state, actions }) {
   const data = state.admin.data;
   const [filters, setFilters] = useState(state.admin.filters);
   if (!data) return <EmptyCard text="관리자 데이터를 불러오는 중입니다." />;
-  const { summary, users, conversations, usage, settings, logs } = data;
+  const { summary, users, conversations, usage, settings, logs, appFeedbacks } = data;
   const cost = settings.settings?.cost || {};
   const exchangeRate = cost.exchangeRate || {};
   const usdToKrw = Number(cost.usdToKrw || 0);
@@ -799,7 +832,15 @@ function AdminScreen({ state, actions }) {
         </CardContent>
       </Card>
       <UsageChart usage={usage} />
-      <AdminTables state={state} users={users.users || []} conversations={conversations.conversations || []} usage={usage} logs={logs?.logs || []} actions={actions} />
+      <AdminTables
+        state={state}
+        users={users.users || []}
+        conversations={conversations.conversations || []}
+        usage={usage}
+        logs={logs?.logs || []}
+        appFeedbacks={appFeedbacks?.feedbacks || []}
+        actions={actions}
+      />
       <AdminConversationDrawer detail={convDetail} personas={state.personas} onClose={actions.closeAdminConversationDetail} />
       <AdminUserEditorDrawer editor={userEditor} actions={actions} />
     </div>
@@ -990,7 +1031,7 @@ function UsageChart({ usage }) {
   );
 }
 
-function AdminTables({ state, users, conversations, usage, logs = [], actions }) {
+function AdminTables({ state, users, conversations, usage, logs = [], appFeedbacks = [], actions }) {
   return (
     <Accordion type="multiple" defaultValue={[]} className="grid gap-3">
       <AdminAccordion value="users" title="사용자별 사용량">
@@ -1089,6 +1130,23 @@ function AdminTables({ state, users, conversations, usage, logs = [], actions })
             />
           ))}
           {!logs.length ? <p className="rounded-xl border bg-muted/40 p-3 text-sm text-muted-foreground">저장된 앱 오류 로그가 없습니다.</p> : null}
+        </div>
+      </AdminAccordion>
+      <AdminAccordion value="app-feedbacks" title="앱 피드백">
+        <div className="grid gap-2">
+          {appFeedbacks.map((feedback) => (
+            <AdminListRow
+              key={feedback.id}
+              title={feedback.user?.name || feedback.user?.email || "사용자"}
+              subtitle={formatDate(feedback.createdAt)}
+              badge={feedback.page ? <Badge variant="secondary">{feedback.page}</Badge> : null}
+              items={[
+                ["내용", feedback.message || "—"],
+                ["사용자", feedback.user?.email || feedback.user?.id || "—"]
+              ]}
+            />
+          ))}
+          {!appFeedbacks.length ? <p className="rounded-xl border bg-muted/40 p-3 text-sm text-muted-foreground">아직 앱 피드백이 없습니다.</p> : null}
         </div>
       </AdminAccordion>
     </Accordion>
