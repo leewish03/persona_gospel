@@ -44,6 +44,7 @@ function userMessageForError(error, context = "general") {
     return raw || "피드백을 생성하지 못했습니다. 잠시 후 다시 시도해주세요.";
   }
   if (context === "profile") return raw || "기본 정보를 저장하지 못했습니다. 입력값을 확인한 뒤 다시 시도해주세요.";
+  if (context === "appFeedback") return raw || "피드백을 보내지 못했습니다. 잠시 후 다시 시도해주세요.";
   if (context === "auth") return raw || "로그인을 완료하지 못했습니다. 잠시 후 다시 시도해주세요.";
   if (context === "admin" || context === "adminDetail") {
     if (internal) return "관리자 데이터를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.";
@@ -123,6 +124,8 @@ export function useAppController() {
   });
   const [shareNotice, setShareNotice] = useState("");
   const [pendingDialog, setPendingDialog] = useState(null);
+  const [appFeedbackForm, setAppFeedbackForm] = useState("");
+  const [appFeedbackNotice, setAppFeedbackNotice] = useState("");
 
   const hasUser = Boolean(auth.user);
   const profileComplete = Boolean(auth.user?.profileComplete || isProfileComplete(auth.user?.profile));
@@ -330,19 +333,20 @@ export function useAppController() {
       if (filters.from) query.set("from", filters.from);
       if (filters.to) query.set("to", filters.to);
       const userQuery = filters.q ? `?q=${encodeURIComponent(filters.q)}&limit=200` : "?limit=200";
-      const [summary, users, conversations, usage, settings, logs] = await Promise.all([
+      const [summary, users, conversations, usage, settings, logs, appFeedbacks] = await Promise.all([
         getJson("/api/admin/summary"),
         getJson(`/api/admin/users${userQuery}`),
         getJson(`/api/admin/conversations?${query}&limit=200`),
         getJson(`/api/admin/usage?${query}&limit=500`),
         getJson("/api/admin/settings"),
-        getJson("/api/admin/logs?limit=100")
+        getJson("/api/admin/logs?limit=100"),
+        getJson("/api/admin/app-feedbacks?limit=100")
       ]);
       setAdmin((value) => ({
         ...value,
         filters,
         loading: false,
-        data: { summary, users, conversations, usage, settings, logs }
+        data: { summary, users, conversations, usage, settings, logs, appFeedbacks }
       }));
     } catch (error) {
       setErrors((value) => ({ ...value, global: userMessageForError(error, "admin") }));
@@ -730,6 +734,22 @@ export function useAppController() {
     return data.settings;
   }, [loadAdmin]);
 
+  const submitAppFeedback = useCallback(async () => {
+    const message = appFeedbackForm.trim();
+    if (!message || isBusy) return;
+    setIsBusy(true);
+    setAppFeedbackNotice("");
+    try {
+      await postJson("/api/app-feedback", { message, page: currentScreen });
+      setAppFeedbackForm("");
+      setAppFeedbackNotice("피드백을 보냈습니다. 개선에 참고하겠습니다.");
+    } catch (error) {
+      setAppFeedbackNotice(userMessageForError(error, "appFeedback"));
+    } finally {
+      setIsBusy(false);
+    }
+  }, [appFeedbackForm, currentScreen, isBusy]);
+
   const handlePrimaryAction = useCallback(async () => {
     if (currentScreen === "home") {
       if (!hasUser) return goTo("login");
@@ -805,6 +825,8 @@ export function useAppController() {
       admin,
       shareNotice,
       pendingDialog,
+      appFeedbackForm,
+      appFeedbackNotice,
       hasUser,
       profileComplete,
       isAdmin
@@ -817,6 +839,7 @@ export function useAppController() {
       setReviewConfirmed,
       setHistory,
       setAdmin,
+      setAppFeedbackForm,
       cancelPendingDialog,
       confirmPendingDialog,
       goTo,
@@ -847,6 +870,7 @@ export function useAppController() {
       setAdminUserEditorProfile,
       saveAdminUser,
       saveAdminSettings,
+      submitAppFeedback,
       shareFeedback,
       handlePrimaryAction,
       handleSecondaryAction
