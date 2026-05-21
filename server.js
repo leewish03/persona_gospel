@@ -1109,13 +1109,24 @@ function publicConversation(conversation, { includeMessages = false, includeFeed
   return payload;
 }
 
+function dateFilterValue(value, { endOfDay = false } = {}) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const date = new Date(raw);
+  if (!Number.isFinite(date.getTime())) return null;
+  if (endOfDay && /^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    date.setUTCHours(23, 59, 59, 999);
+  }
+  return date;
+}
+
 function filterConversations(conversations, searchParams = new URLSearchParams(), { userId } = {}) {
   const q = String(searchParams.get("q") || "").trim().toLowerCase();
   const personaId = searchParams.get("personaId") || "";
   const goal = searchParams.get("goal") || "";
   const status = searchParams.get("status") || "";
-  const from = searchParams.get("from") ? new Date(searchParams.get("from")) : null;
-  const to = searchParams.get("to") ? new Date(searchParams.get("to")) : null;
+  const from = dateFilterValue(searchParams.get("from"));
+  const to = dateFilterValue(searchParams.get("to"), { endOfDay: true });
   return conversations.filter((conversation) => {
     if (userId && conversation.userId !== userId) return false;
     if (personaId && conversation.session?.personaId !== personaId) return false;
@@ -1191,8 +1202,8 @@ function usageSummary(events = db.usageEvents) {
 }
 
 function filterUsageEvents(events = db.usageEvents, searchParams = new URLSearchParams()) {
-  const from = searchParams.get("from") ? new Date(searchParams.get("from")) : null;
-  const to = searchParams.get("to") ? new Date(searchParams.get("to")) : null;
+  const from = dateFilterValue(searchParams.get("from"));
+  const to = dateFilterValue(searchParams.get("to"), { endOfDay: true });
   const q = String(searchParams.get("q") || "").trim().toLowerCase();
   return events.filter((event) => {
     const created = new Date(event.createdAt);
@@ -1292,6 +1303,30 @@ function incompleteResponseError(provider, reason = "") {
 
 function isMaxOutputIncomplete(error) {
   return error?.code === "MODEL_RESPONSE_INCOMPLETE" && error.reason === "max_output_tokens";
+}
+
+function sanitizeConversationMessages(messages = [], { maxMessages = 80, maxContentLength = 4000 } = {}) {
+  if (!Array.isArray(messages)) return [];
+  return messages
+    .map((message) => ({
+      role: message?.role === "assistant" ? "assistant" : message?.role === "user" ? "user" : "",
+      content: String(message?.content || "").trim()
+    }))
+    .filter((message) => message.role && message.content)
+    .map((message) => ({
+      ...message,
+      content: message.content.slice(0, maxContentLength)
+    }))
+    .slice(-maxMessages);
+}
+
+function messagesEqual(left = {}, right = {}) {
+  return left.role === right.role && String(left.content || "") === String(right.content || "");
+}
+
+function messagePrefixMatches(base = [], candidate = []) {
+  if (candidate.length < base.length) return false;
+  return base.every((message, index) => messagesEqual(message, candidate[index]));
 }
 
 function extractAnthropicText(response) {
@@ -1589,6 +1624,9 @@ async function callAnthropicWithUsage({
     const contentTypes = (data.content || []).map((block) => block?.type).filter(Boolean).join(", ") || "none";
     const reason = data.stop_reason ? ` stop_reason=${data.stop_reason}` : "";
     throw new Error(`Claude 응답에서 텍스트를 찾지 못했습니다.${reason} content_types=${contentTypes}`);
+  }
+  if (data.stop_reason === "max_tokens") {
+    throw incompleteResponseError("Anthropic", "max_output_tokens");
   }
   return { text, usage: normalizeAnthropicUsage(data.usage) };
 }
@@ -3507,12 +3545,27 @@ async function handleApi(req, res, url) {
         json(res, 409, { error: "이미 완료된 훈련 기록입니다. 같은 설정으로 다시 시작해주세요." });
         return;
       }
-      const safeMessages = (body.messages || []).slice(-60);
-      if (safeMessages.filter((message) => message.role === "user").length > 30) {
+      const safeMessages = sanitizeConversationMessages(body.messages);
+      const serverMessages = sanitizeConversationMessages(conversation.messages);
+      const nextUserMessage = safeMessages.at(-1);
+      if (!nextUserMessage || nextUserMessage.role !== "user" || !messagePrefixMatches(serverMessages, safeMessages.slice(0, -1))) {
+        void recordAppLog({
+          level: "warn",
+          eventType: "chat_state_mismatch",
+          message: "Chat payload did not extend server conversation state.",
+          userId: user.id,
+          conversationId: conversation.id,
+          context: { path, method: req.method, serverMessages: serverMessages.length, clientMessages: safeMessages.length }
+        });
+        json(res, 409, { error: "대화 상태가 맞지 않습니다. 기록을 새로고침한 뒤 다시 시도해주세요." });
+        return;
+      }
+      const promptMessages = [...serverMessages, nextUserMessage];
+      if (promptMessages.filter((message) => message.role === "user").length > 30) {
         json(res, 400, { error: "한 번의 훈련에서는 최대 30턴까지 대화할 수 있습니다. 피드백을 받고 새 훈련을 시작해주세요." });
         return;
       }
-      const prompt = roleplayPromptPartsFor(session, persona, safeMessages);
+      const prompt = roleplayPromptPartsFor(session, persona, promptMessages);
       const { text, usage, model, provider } = await callModelWithUsage({
         modelType: "chat",
         instructions: personaPrompt,
@@ -3521,7 +3574,7 @@ async function handleApi(req, res, url) {
         dynamicInput: prompt.dynamicInput,
         cacheStaticSystem: true
       });
-      conversation.messages = [...safeMessages, { role: "assistant", content: text }];
+      conversation.messages = [...promptMessages, { role: "assistant", content: text }];
       conversation.updatedAt = new Date().toISOString();
       recordUsageEvent({
         userId: user.id,
@@ -3557,7 +3610,25 @@ async function handleApi(req, res, url) {
         json(res, 200, { text: conversation.feedbackText, alreadyFinished: true });
         return;
       }
-      const feedbackMessages = body.messages || [];
+      const clientFeedbackMessages = sanitizeConversationMessages(body.messages);
+      const serverMessages = sanitizeConversationMessages(conversation.messages);
+      const feedbackMessages = messagePrefixMatches(serverMessages, clientFeedbackMessages)
+        ? clientFeedbackMessages
+        : serverMessages;
+      if (!feedbackMessages.some((message) => message.role === "user")) {
+        json(res, 400, { error: "피드백을 받으려면 먼저 한 번 이상 대화해야 합니다." });
+        return;
+      }
+      if (clientFeedbackMessages.length && feedbackMessages === serverMessages && !messagePrefixMatches(serverMessages, clientFeedbackMessages)) {
+        void recordAppLog({
+          level: "warn",
+          eventType: "feedback_state_mismatch",
+          message: "Feedback payload did not match server conversation state; server messages were used.",
+          userId: user.id,
+          conversationId: conversation.id,
+          context: { path, method: req.method, serverMessages: serverMessages.length, clientMessages: clientFeedbackMessages.length }
+        });
+      }
       conversation.messages = feedbackMessages;
       conversation.updatedAt = new Date().toISOString();
       await saveDb();
@@ -3691,7 +3762,7 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  if ((req.method === "GET" || req.method === "POST" || req.method === "PUT") && url.pathname.startsWith("/api/")) {
+  if ((req.method === "GET" || req.method === "POST" || req.method === "PUT" || req.method === "DELETE") && url.pathname.startsWith("/api/")) {
     await handleApi(req, res, url);
     return;
   }

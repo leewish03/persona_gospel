@@ -95,11 +95,12 @@ function AppShell({ state, actions, children }) {
   const isHome = state.currentScreen === "home";
   const actionless = ["login", "history", "historyDetail", "settings", "admin"].includes(state.currentScreen);
   const primaryLabel = state.currentScreen === "review" && !state.reviewConfirmed ? "내용 확인" : meta.action;
-  const showBottom = !isHome && !actionless && !(state.currentScreen === "chat" && state.sessionStarted);
   const showTabs = state.hasUser && state.profileComplete && !["login", "profile"].includes(state.currentScreen);
   const chatUserTurns = state.messages.filter((m) => m.role === "user").length;
   const canFeedbackFromChat = chatUserTurns > 0 && !state.isBusy && state.sessionStarted;
+  const feedbackReady = state.currentScreen !== "feedback" || (Boolean(state.latestFeedbackText) && !state.feedbackError);
   const headerTrailingChat = state.currentScreen === "chat" && state.sessionStarted;
+  const showBottom = !isHome && !actionless && !(state.currentScreen === "chat" && state.sessionStarted) && feedbackReady;
 
   useEffect(() => {
     const root = document.documentElement;
@@ -254,7 +255,7 @@ function TabBar({ state, actions }) {
   ];
   return (
     <nav
-      className="fixed left-1/2 z-40 grid w-full max-w-[480px] -translate-x-1/2 auto-cols-fr grid-flow-col gap-2 border-t bg-card/95 px-3 pb-[max(env(safe-area-inset-bottom),0.5rem))] pt-2 shadow-[0_-10px_24px_rgba(23,33,31,0.08)] backdrop-blur"
+      className="fixed left-1/2 z-40 grid w-full max-w-[480px] -translate-x-1/2 auto-cols-fr grid-flow-col gap-2 border-t bg-card/95 px-3 pb-[max(env(safe-area-inset-bottom),0.5rem)] pt-2 shadow-[0_-10px_24px_rgba(23,33,31,0.08)] backdrop-blur"
       style={{ bottom: "var(--keyboard-inset, 0px)" }}
       aria-label="하단 내비게이션"
     >
@@ -500,7 +501,7 @@ function MessageBubble({ message, persona, typing }) {
         </Avatar>
       ) : null}
       {!isSystem ? <span className="px-1 text-xs font-black text-muted-foreground">{isAssistant ? persona?.name : "나"}</span> : null}
-      <div className={cn("whitespace-pre-wrap rounded-2xl bg-background px-3 py-2 text-sm leading-6 shadow-sm", message.role === "user" && "rounded-br-md bg-yellow-300 text-stone-950", isAssistant && "rounded-bl-md", isSystem && "bg-amber-50 text-amber-900")}>
+      <div className={cn("break-words whitespace-pre-wrap rounded-2xl bg-background px-3 py-2 text-sm leading-6 shadow-sm", message.role === "user" && "rounded-br-md bg-yellow-300 text-stone-950", isAssistant && "rounded-bl-md", isSystem && "bg-amber-50 text-amber-900")}>
         {typing ? <span className="animate-pulse">{message.content}</span> : message.content}
       </div>
     </article>
@@ -667,7 +668,7 @@ function HistoryDetailScreen({ state, actions }) {
       <Card>
         <CardHeader><CardTitle>대화 전문</CardTitle></CardHeader>
         <CardContent className="grid gap-2">
-          {(item.messages || []).map((message, index) => <p key={index} className={cn("rounded-xl bg-muted p-3 text-sm whitespace-pre-wrap", message.role === "user" && "bg-yellow-100")}><b>{message.role === "user" ? "나" : labels.persona}</b><br />{message.content}</p>)}
+          {(item.messages || []).map((message, index) => <p key={index} className={cn("break-words rounded-xl bg-muted p-3 text-sm whitespace-pre-wrap", message.role === "user" && "bg-yellow-100")}><b>{message.role === "user" ? "나" : labels.persona}</b><br />{message.content}</p>)}
         </CardContent>
       </Card>
       <Card>
@@ -881,7 +882,7 @@ function AdminConversationDrawer({ detail, personas, onClose }) {
                 <CardHeader className="pb-2"><CardTitle className="text-base">대화 전문</CardTitle></CardHeader>
                 <CardContent className="grid gap-2">
                   {(conv.messages || []).map((message, index) => (
-                    <p key={index} className={cn("rounded-xl bg-muted p-3 text-sm whitespace-pre-wrap", message.role === "user" && "bg-yellow-100")}>
+                    <p key={index} className={cn("break-words rounded-xl bg-muted p-3 text-sm whitespace-pre-wrap", message.role === "user" && "bg-yellow-100")}>
                       <b>{message.role === "user" ? "훈련자" : labels.persona}</b>
                       <br />
                       {message.content}
