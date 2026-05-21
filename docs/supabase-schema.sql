@@ -29,7 +29,8 @@ create table if not exists public.conversations (
   assistant_message_count integer not null default 0,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  finished_at timestamptz
+  finished_at timestamptz,
+  hidden_by_user_at timestamptz
 );
 
 create table if not exists public.conversation_messages (
@@ -60,9 +61,27 @@ create table if not exists public.app_settings (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.app_logs (
+  id uuid primary key,
+  level text not null default 'error',
+  event_type text not null,
+  message text not null default '',
+  user_id uuid references public.app_users(id) on delete set null,
+  conversation_id uuid references public.conversations(id) on delete set null,
+  context jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+
 create index if not exists idx_conversations_user_created on public.conversations(user_id, created_at desc);
 create index if not exists idx_conversations_status on public.conversations(status);
+create index if not exists idx_conversations_hidden_by_user_at on public.conversations(hidden_by_user_at);
 create index if not exists idx_messages_conversation_order on public.conversation_messages(conversation_id, sort_order);
 create index if not exists idx_usage_events_created on public.usage_events(created_at desc);
 create index if not exists idx_usage_events_user_created on public.usage_events(user_id, created_at desc);
 create index if not exists idx_usage_events_conversation on public.usage_events(conversation_id);
+create index if not exists idx_app_logs_created_at on public.app_logs(created_at desc);
+create index if not exists idx_app_logs_event_type on public.app_logs(event_type);
+create index if not exists idx_app_logs_user_id on public.app_logs(user_id);
+create index if not exists idx_app_logs_conversation_id on public.app_logs(conversation_id);
+
+alter table public.app_logs enable row level security;

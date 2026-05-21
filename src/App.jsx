@@ -564,10 +564,10 @@ function FeedbackScreen({ state, actions }) {
             <AlertTitle>피드백을 생성하지 못했습니다</AlertTitle>
             <AlertDescription className="grid gap-3">
               <p>{state.feedbackError}</p>
-              <p>대화 내용은 저장되어 있습니다. 잠시 후 다시 시도하거나 대화 화면으로 돌아가 이어서 훈련할 수 있습니다.</p>
+              <p>{state.sessionStarted ? "대화 내용은 저장되어 있습니다. 잠시 후 다시 시도하거나 대화 화면으로 돌아가 이어서 훈련할 수 있습니다." : "이 훈련 기록은 더 이상 이어갈 수 없습니다. 기록 화면에서 다른 훈련을 선택하거나 새 훈련을 시작해주세요."}</p>
               <div className="grid grid-cols-2 gap-2">
-                <Button type="button" variant="secondary" disabled={state.isBusy} onClick={actions.retryFeedback}>다시 시도</Button>
-                <Button type="button" variant="outline" disabled={state.isBusy} onClick={actions.returnToChatFromFeedback}>대화로 돌아가기</Button>
+                <Button type="button" variant="secondary" disabled={state.isBusy || !state.sessionStarted} onClick={actions.retryFeedback}>다시 시도</Button>
+                <Button type="button" variant="outline" disabled={state.isBusy} onClick={actions.returnToChatFromFeedback}>{state.sessionStarted ? "대화로 돌아가기" : "기록으로 돌아가기"}</Button>
               </div>
             </AlertDescription>
           </Alert>
@@ -722,7 +722,7 @@ function AdminScreen({ state, actions }) {
   const data = state.admin.data;
   const [filters, setFilters] = useState(state.admin.filters);
   if (!data) return <EmptyCard text="관리자 데이터를 불러오는 중입니다." />;
-  const { summary, users, conversations, usage, settings } = data;
+  const { summary, users, conversations, usage, settings, logs } = data;
   const cost = settings.settings?.cost || {};
   const exchangeRate = cost.exchangeRate || {};
   const usdToKrw = Number(cost.usdToKrw || 0);
@@ -799,7 +799,7 @@ function AdminScreen({ state, actions }) {
         </CardContent>
       </Card>
       <UsageChart usage={usage} />
-      <AdminTables state={state} users={users.users || []} conversations={conversations.conversations || []} usage={usage} actions={actions} />
+      <AdminTables state={state} users={users.users || []} conversations={conversations.conversations || []} usage={usage} logs={logs?.logs || []} actions={actions} />
       <AdminConversationDrawer detail={convDetail} personas={state.personas} onClose={actions.closeAdminConversationDetail} />
       <AdminUserEditorDrawer editor={userEditor} actions={actions} />
     </div>
@@ -990,7 +990,7 @@ function UsageChart({ usage }) {
   );
 }
 
-function AdminTables({ state, users, conversations, usage, actions }) {
+function AdminTables({ state, users, conversations, usage, logs = [], actions }) {
   return (
     <Accordion type="multiple" defaultValue={[]} className="grid gap-3">
       <AdminAccordion value="users" title="사용자별 사용량">
@@ -1073,8 +1073,41 @@ function AdminTables({ state, users, conversations, usage, actions }) {
           {!usage.events?.length ? <p className="rounded-xl border bg-muted/40 p-3 text-sm text-muted-foreground">사용량 이벤트가 없습니다.</p> : null}
         </div>
       </AdminAccordion>
+      <AdminAccordion value="logs" title="앱 오류 로그">
+        <div className="grid gap-2">
+          {logs.map((log) => (
+            <AdminListRow
+              key={log.id}
+              title={log.message || log.eventType || "로그"}
+              subtitle={`${log.eventType || "server_event"} · ${formatDate(log.createdAt)}`}
+              badge={<Badge variant={log.level === "error" ? "destructive" : "secondary"}>{log.level || "log"}</Badge>}
+              items={[
+                ["사용자", log.userId || "—"],
+                ["훈련", log.conversationId || "—"],
+                ["컨텍스트", summarizeLogContext(log.context)]
+              ]}
+            />
+          ))}
+          {!logs.length ? <p className="rounded-xl border bg-muted/40 p-3 text-sm text-muted-foreground">저장된 앱 오류 로그가 없습니다.</p> : null}
+        </div>
+      </AdminAccordion>
     </Accordion>
   );
+}
+
+function summarizeLogContext(context = {}) {
+  if (!context || typeof context !== "object") return "—";
+  const entries = Object.entries(context).filter(([, value]) => value !== undefined && value !== "");
+  if (!entries.length) return "—";
+  return entries
+    .slice(0, 8)
+    .map(([key, value]) => {
+      if (value === null) return `${key}: null`;
+      if (["string", "number", "boolean"].includes(typeof value)) return `${key}: ${String(value)}`;
+      if (key === "error" && value?.message) return `${key}: ${value.message}`;
+      return `${key}: ${JSON.stringify(value).slice(0, 160)}`;
+    })
+    .join(" · ");
 }
 
 function AdminListRow({ title, subtitle, badge, items = [], footer }) {
