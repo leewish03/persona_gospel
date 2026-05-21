@@ -2,6 +2,22 @@
 
 이 문서는 앞으로 기능 개발을 진행할 때 사용할 4개 기본 개발 에이전트 역할과 오케스트레이션 규칙을 정의한다.
 
+구체적인 하위 에이전트 프롬프트는 `docs/development-agents/`에 둔다.
+
+- `docs/development-agents/backend-api-agent.md`
+- `docs/development-agents/frontend-ux-agent.md`
+- `docs/development-agents/supabase-data-agent.md`
+- `docs/development-agents/qa-regression-agent.md`
+
+이 구조는 `popup-studio-ai/bkit-claude-code`의 PDCA, specialist agent, gap detection, QA gate 방식을 이 저장소에 맞게 변환한 것이다. bkit 원문을 그대로 실행하지 않고 Codex의 하위 에이전트 작업 단위에 맞춘다.
+
+참고:
+
+- https://github.com/popup-studio-ai/bkit-claude-code
+- https://github.com/popup-studio-ai/bkit-claude-code/tree/main/agents
+- https://github.com/popup-studio-ai/bkit-claude-code/blob/main/agents/gap-detector.md
+- https://github.com/popup-studio-ai/bkit-claude-code/blob/main/agents/qa-lead.md
+
 기본 원칙:
 
 - 메인 Codex가 요구사항, 최종 판단, 통합, 커밋, 병합을 책임진다.
@@ -183,6 +199,51 @@
 - DB 스키마, Supabase, 데이터 복구, 로그/피드백 테이블이 있으면 Supabase/Data Agent를 사용한다.
 - 코드 변경이 생기면 QA/Regression Agent를 마지막에 사용한다.
 
+## bkit-Style Workflow
+
+기본 흐름은 Plan → Design → Do → Check → Act → Report로 진행한다.
+
+Plan:
+
+- 사용자의 요청을 Context Anchor로 정리한다.
+- 형식: WHY, WHO, SUCCESS, RISK, SCOPE, OUT OF SCOPE, FILES LIKELY TO CHANGE, QUALITY GATES.
+- 애매한 요구사항은 먼저 코드와 데이터 흐름을 읽고 합리적 가정을 둔다.
+
+Design:
+
+- API, UI, DB가 함께 바뀌는 경우 서버-클라이언트-데이터 계약을 먼저 적는다.
+- 복수 접근이 가능하면 2-3개 옵션을 비교하고 보수적인 선택을 한다.
+- 큰 기능은 한 세션에서 끝낼 수 있는 크기로 나눈다.
+
+Do:
+
+- 필요한 하위 에이전트만 띄운다.
+- 파일 소유권을 분리한다.
+- 하위 에이전트는 자신이 맡은 파일과 책임만 수정한다.
+- 메인 Codex는 즉시 통합이 필요한 블로킹 작업을 직접 맡는다.
+
+Check:
+
+- bkit의 gap-detector 방식을 차용해 다음 축으로 검증한다.
+- Structural: 필요한 파일, 컴포넌트, 라우트가 있는가.
+- Functional: 요구 기능이 실제로 동작하는가.
+- Contract: server route, frontend call, data model이 일치하는가.
+- Intent: 사용자의 실제 목적을 달성하는가.
+- Behavioral: validation, auth, hidden/deleted, retry, duplicate submit, server error가 처리되는가.
+- UX: loading, empty, success, error 상태가 사용자에게 명확한가.
+- Runtime: `node --check server.js`, `npm.cmd run check`, 필요 시 smoke/browser/API 검증이 통과하는가.
+
+Act:
+
+- Overall Match가 90% 미만이라고 판단되면 반복 개선한다.
+- 반복 개선은 최대 5회까지로 제한한다.
+- 반복할 때는 점수 올리기용 주석이나 placeholder가 아니라 실제 동작을 고친다.
+
+Report:
+
+- 변경 파일, 검증 결과, 남은 위험, 배포/운영 확인 필요 사항을 짧게 남긴다.
+- 민감한 원문 데이터는 보고하지 않는다.
+
 병렬화 기준:
 
 - Backend/API Agent와 Frontend/UX Agent는 API 계약이 명확하면 병렬로 진행할 수 있다.
@@ -196,6 +257,13 @@
 - `codex/persona`에서 작업하고 검증 후 `master`에 병합한다.
 - 빌드 산출물은 실제 `public/index.html`이 참조하는 새 번들만 포함한다.
 - 내용 변경 없는 line ending 흔들림은 커밋하지 않는다.
+
+하위 에이전트 프롬프트를 사용할 때:
+
+- `spawn_agent`를 허용받은 작업에서만 실제 하위 에이전트를 띄운다.
+- 각 에이전트에게 `docs/development-agents/{agent}.md` 내용을 요약해 전달한다.
+- 코드 변경 에이전트에게는 파일 소유권을 반드시 명시한다.
+- QA/Regression Agent는 구현 패치 이후에 실행한다.
 
 기본 최종 검증:
 
