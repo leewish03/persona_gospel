@@ -330,18 +330,19 @@ export function useAppController() {
       if (filters.from) query.set("from", filters.from);
       if (filters.to) query.set("to", filters.to);
       const userQuery = filters.q ? `?q=${encodeURIComponent(filters.q)}&limit=200` : "?limit=200";
-      const [summary, users, conversations, usage, settings] = await Promise.all([
+      const [summary, users, conversations, usage, settings, logs] = await Promise.all([
         getJson("/api/admin/summary"),
         getJson(`/api/admin/users${userQuery}`),
         getJson(`/api/admin/conversations?${query}&limit=200`),
         getJson(`/api/admin/usage?${query}&limit=500`),
-        getJson("/api/admin/settings")
+        getJson("/api/admin/settings"),
+        getJson("/api/admin/logs?limit=100")
       ]);
       setAdmin((value) => ({
         ...value,
         filters,
         loading: false,
-        data: { summary, users, conversations, usage, settings }
+        data: { summary, users, conversations, usage, settings, logs }
       }));
     } catch (error) {
       setErrors((value) => ({ ...value, global: userMessageForError(error, "admin") }));
@@ -523,8 +524,8 @@ export function useAppController() {
   const logout = useCallback(async () => {
     await postJson("/api/logout");
     setAuth((value) => ({ ...value, user: null }));
-    resetAll();
-  }, [resetAll]);
+    resetAllConfirmed();
+  }, [resetAllConfirmed]);
 
   const startSession = useCallback(async () => {
     if (!validateContext()) return;
@@ -572,6 +573,11 @@ export function useAppController() {
       setMessages([...nextMessages, { role: "assistant", content: data.text }]);
       setWaitingForAssistant(false);
     } catch (error) {
+      if ([404, 409].includes(Number(error?.status || 0))) {
+        setConversationId("");
+        setActiveSession(null);
+        setSessionStarted(false);
+      }
       setMessages([...nextMessages, { role: "system", content: userMessageForError(error, "chat") }]);
       setWaitingForAssistant(false);
     } finally {
@@ -609,7 +615,13 @@ export function useAppController() {
     } catch (error) {
       setLatestFeedbackText("");
       setFeedbackError(userMessageForError(error, "feedback"));
-      setSessionStarted(true);
+      if ([404, 409].includes(Number(error?.status || 0))) {
+        setConversationId("");
+        setActiveSession(null);
+        setSessionStarted(false);
+      } else {
+        setSessionStarted(true);
+      }
     } finally {
       setIsBusy(false);
     }
@@ -622,8 +634,8 @@ export function useAppController() {
 
   const returnToChatFromFeedback = useCallback(() => {
     if (isBusy) return;
-    setCurrentScreen("chat");
-  }, [isBusy]);
+    setCurrentScreen(sessionStarted ? "chat" : "history");
+  }, [isBusy, sessionStarted]);
 
   const cancelPendingDialog = useCallback(() => {
     setPendingDialog(null);

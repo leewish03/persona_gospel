@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { Buffer } from "node:buffer";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
@@ -37,6 +37,7 @@ const sessionSecret =
   "";
 const storageDir = globalThis.process?.env?.STORAGE_DIR || join(rootDir, "storage");
 const dbPath = join(storageDir, "db.json");
+const appLogPath = join(storageDir, "app-logs.jsonl");
 const supabaseUrl = String(globalThis.process?.env?.SUPABASE_URL || "").replace(/\/+$/, "");
 const supabaseServiceRoleKey = globalThis.process?.env?.SUPABASE_SERVICE_ROLE_KEY || "";
 const usdToKrw = Number(globalThis.process?.env?.USD_TO_KRW || 1480);
@@ -399,6 +400,117 @@ async function supabaseRequest(path, { method = "GET", body } = {}) {
     throw new Error(message);
   }
   return data;
+}
+
+function errorSummary(error) {
+  return {
+    name: String(error?.name || "Error").slice(0, 120),
+    message: String(error?.message || error || "Unknown error").slice(0, 1000),
+    stack: String(error?.stack || "").split(/\r?\n/).slice(0, 4).join("\n").slice(0, 2000)
+  };
+}
+
+function cleanLogContext(context = {}) {
+  const blocked = new Set(["messages", "input", "output", "prompt", "instructions", "dynamicInput", "staticSystemBlocks", "feedbackText"]);
+  const cleaned = {};
+  for (const [key, value] of Object.entries(context || {})) {
+    if (blocked.has(key)) continue;
+    if (value === undefined) continue;
+    if (value === null || ["string", "number", "boolean"].includes(typeof value)) {
+      cleaned[key] = typeof value === "string" ? value.slice(0, 500) : value;
+    } else if (Array.isArray(value)) {
+      cleaned[key] = value.slice(0, 12).map((item) => (typeof item === "string" ? item.slice(0, 200) : item));
+    } else if (typeof value === "object") {
+      cleaned[key] = JSON.parse(JSON.stringify(value, (nestedKey, nestedValue) => {
+        if (blocked.has(nestedKey)) return undefined;
+        return typeof nestedValue === "string" ? nestedValue.slice(0, 500) : nestedValue;
+      }));
+    }
+  }
+  return cleaned;
+}
+
+function appLogToSupabase(entry) {
+  return {
+    id: entry.id,
+    level: entry.level,
+    event_type: entry.eventType,
+    message: entry.message,
+    user_id: entry.userId || null,
+    conversation_id: entry.conversationId || null,
+    context: entry.context || {},
+    created_at: entry.createdAt
+  };
+}
+
+function supabaseLogToApp(row) {
+  return {
+    id: row.id,
+    level: row.level || "error",
+    eventType: row.event_type || "",
+    message: row.message || "",
+    userId: row.user_id || "",
+    conversationId: row.conversation_id || "",
+    context: row.context || {},
+    createdAt: row.created_at || ""
+  };
+}
+
+async function recordAppLog({ level = "error", eventType = "server_event", message = "", userId = "", conversationId = "", context = {}, error } = {}) {
+  const entry = {
+    id: randomUUID(),
+    level,
+    eventType,
+    message: String(message || error?.message || eventType).slice(0, 1000),
+    userId: userId || "",
+    conversationId: conversationId || "",
+    context: cleanLogContext({ ...context, ...(error ? { error: errorSummary(error) } : {}) }),
+    createdAt: new Date().toISOString()
+  };
+  try {
+    if (supabaseUrl && supabaseServiceRoleKey) {
+      await supabaseRequest("app_logs", { method: "POST", body: [appLogToSupabase(entry)] });
+      return;
+    }
+  } catch (logError) {
+    console.error("App log Supabase write failed.", logError);
+  }
+  try {
+    await mkdir(storageDir, { recursive: true });
+    await appendFile(appLogPath, `${JSON.stringify(entry)}\n`, "utf8");
+  } catch (fileError) {
+    console.error("App log file write failed.", fileError);
+  }
+}
+
+async function loadAppLogs({ limit = 100 } = {}) {
+  const safeLimit = Math.min(200, Math.max(1, Number(limit) || 100));
+  if (supabaseUrl && supabaseServiceRoleKey) {
+    try {
+      const rows = await supabaseRequest(`app_logs?select=*&order=created_at.desc&limit=${safeLimit}`);
+      return Array.isArray(rows) ? rows.map(supabaseLogToApp) : [];
+    } catch (error) {
+      console.error("App log Supabase read failed. Falling back to file logs.", error);
+    }
+  }
+  try {
+    const text = await readFile(appLogPath, "utf8");
+    return text
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => {
+        try {
+          return JSON.parse(line);
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean)
+      .slice(-safeLimit)
+      .reverse();
+  } catch {
+    return [];
+  }
 }
 
 function supabaseUserToApp(row) {
@@ -912,8 +1024,17 @@ function requireAdmin(req, res) {
   return user;
 }
 
-function publicServerError(error) {
+function publicServerError(error, context = {}) {
   console.error(error);
+  void recordAppLog({
+    level: "error",
+    eventType: context.eventType || "server_error",
+    message: error?.message || "Unhandled server error",
+    userId: context.userId || "",
+    conversationId: context.conversationId || "",
+    context,
+    error
+  });
   return {
     error: "요청 처리 중 문제가 발생했습니다. 잠시 후 다시 시도해주세요.",
     code: "INTERNAL_ERROR"
@@ -1503,7 +1624,7 @@ const userMovePatterns = [
   { userMove: "sin_repentance", pattern: /죄|회개|잘못|하나님 앞|기준|거룩/ },
   { userMove: "faith_salvation", pattern: /믿음|구원|영생|은혜|행위|선행|믿는/ },
   { userMove: "god_love", pattern: /하나님.*사랑|사랑하|존재.*가치|성과.*아니|있는 그대로/ },
-  { userMove: "personal_witness", pattern: /나는|나도|내가.*겪|내 경험|간증|나 같은 경우/ },
+  { userMove: "personal_witness", pattern: /나도.*(겪|경험|느꼈|배웠|믿게|알게)|내가.*(겪|경험|느꼈|배웠|믿게|알게)|내 경험|간증|나 같은 경우/ },
   { userMove: "empathy", pattern: /힘들었겠다|그랬구나|이해돼|그럴 수 있|듣고 있어|속상했겠다|외로웠겠다/ },
   { userMove: "question", pattern: /\?|어떻게|왜|무슨|궁금|뭐가|어떤/ }
 ];
@@ -3087,6 +3208,15 @@ async function handleAppApi(req, res, url) {
     return true;
   }
 
+  if (path === "/api/admin/logs" && req.method === "GET") {
+    const user = requireAdmin(req, res);
+    if (!user) return true;
+    const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit") || 100)));
+    const logs = await loadAppLogs({ limit });
+    json(res, 200, { logs });
+    return true;
+  }
+
   if (path === "/api/admin/settings" && req.method === "GET") {
     const user = requireAdmin(req, res);
     if (!user) return true;
@@ -3268,7 +3398,27 @@ async function handleApi(req, res, url) {
     if (path === "/api/chat") {
       const conversation = findConversationForUser(user, body.conversationId);
       if (!conversation) {
+        void recordAppLog({
+          level: "warn",
+          eventType: "chat_missing_conversation",
+          message: "Chat requested for missing or hidden conversation.",
+          userId: user.id,
+          conversationId: body.conversationId || "",
+          context: { path, method: req.method, hasConversationId: Boolean(body.conversationId) }
+        });
         json(res, 404, { error: "훈련 기록을 찾지 못했습니다." });
+        return;
+      }
+      if (conversation.status === "finished") {
+        void recordAppLog({
+          level: "warn",
+          eventType: "chat_finished_conversation",
+          message: "Chat requested for finished conversation.",
+          userId: user.id,
+          conversationId: conversation.id,
+          context: { path, method: req.method, status: conversation.status }
+        });
+        json(res, 409, { error: "이미 완료된 훈련 기록입니다. 같은 설정으로 다시 시작해주세요." });
         return;
       }
       const safeMessages = (body.messages || []).slice(-60);
@@ -3306,6 +3456,14 @@ async function handleApi(req, res, url) {
     if (path === "/api/feedback") {
       const conversation = findConversationForUser(user, body.conversationId);
       if (!conversation) {
+        void recordAppLog({
+          level: "warn",
+          eventType: "feedback_missing_conversation",
+          message: "Feedback requested for missing or hidden conversation.",
+          userId: user.id,
+          conversationId: body.conversationId || "",
+          context: { path, method: req.method, hasConversationId: Boolean(body.conversationId) }
+        });
         json(res, 404, { error: "훈련 기록을 찾지 못했습니다." });
         return;
       }
@@ -3346,6 +3504,15 @@ async function handleApi(req, res, url) {
         provider = result.provider;
       } catch (error) {
         console.error("Feedback generation failed.", error);
+        void recordAppLog({
+          level: "error",
+          eventType: "feedback_generation_failed",
+          message: error?.message || "Feedback generation failed.",
+          userId: user.id,
+          conversationId: conversation.id,
+          context: { path, method: req.method, provider, model },
+          error
+        });
         json(res, 502, { error: "피드백 생성에 실패했습니다. 대화 내용은 저장되어 있으니 잠시 후 다시 시도해주세요." });
         return;
       }
@@ -3372,7 +3539,7 @@ async function handleApi(req, res, url) {
 
     json(res, 404, { error: "Unknown API route." });
   } catch (error) {
-    json(res, 500, publicServerError(error));
+    json(res, 500, publicServerError(error, { eventType: "api_unhandled_error", path, method: req.method }));
   }
 }
 
