@@ -587,6 +587,7 @@ function HistoryScreen({ state, actions }) {
   const stats = state.history.stats || {};
   return (
     <div className="grid gap-4">
+      {state.shareNotice ? <Alert><CheckCircle2 /><AlertTitle>기록</AlertTitle><AlertDescription>{state.shareNotice}</AlertDescription></Alert> : null}
       <Card>
         <CardHeader>
           <CardTitle>성장 요약</CardTitle>

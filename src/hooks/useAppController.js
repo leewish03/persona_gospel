@@ -163,6 +163,7 @@ export function useAppController() {
         setScreenStack((stack) => [...stack.slice(-29), currentScreen]);
       }
       setErrors((value) => ({ ...value, context: "", profile: "", global: "" }));
+      if (!options.keepNotice) setShareNotice("");
       setCurrentScreen(screen);
       return true;
     },
@@ -176,11 +177,13 @@ export function useAppController() {
       while (next.length) {
         const previous = next.pop();
         if (previous && previous !== currentScreen) {
+          setShareNotice("");
           setCurrentScreen(previous);
           return next;
         }
       }
       const index = flowScreens.indexOf(currentScreen);
+      setShareNotice("");
       setCurrentScreen(index > 0 ? flowScreens[index - 1] : "home");
       return next;
     });
@@ -201,6 +204,7 @@ export function useAppController() {
     setSessionStarted(false);
     setWaitingForAssistant(false);
     setContextForm({ relationship: "", setting: "", goal: "" });
+    setShareNotice("");
     setCurrentScreen("home");
   }, [isBusy, sessionStarted]);
 
@@ -214,6 +218,7 @@ export function useAppController() {
     setSessionStarted(false);
     setWaitingForAssistant(false);
     setContextForm({ relationship: "", setting: "", goal: "" });
+    setShareNotice("");
     setCurrentScreen("home");
     setPendingDialog(null);
   }, []);
@@ -289,16 +294,25 @@ export function useAppController() {
         items: value.items.filter((item) => item.id !== id),
         loading: false
       }));
+      if (conversationId === id) {
+        setActiveSession(null);
+        setConversationId("");
+        setMessages([]);
+        setLatestFeedbackText("");
+        setFeedbackError("");
+        setSessionStarted(false);
+        setWaitingForAssistant(false);
+      }
       await loadHistory();
+      goTo("history", { confirmed: true, keepNotice: true });
       setShareNotice("훈련 기록을 삭제했습니다.");
-      goTo("history", { confirmed: true });
     } catch (error) {
       setPendingDialog(null);
       setErrors((value) => ({ ...value, global: userMessageForError(error, "historyDelete") }));
     } finally {
       setIsBusy(false);
     }
-  }, [goTo, loadHistory]);
+  }, [conversationId, goTo, loadHistory]);
 
   const loadAdmin = useCallback(async (filters = admin.filters) => {
     if (!isAdmin) return;
