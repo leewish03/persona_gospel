@@ -3266,6 +3266,11 @@ async function handleApi(req, res, url) {
     }
 
     if (path === "/api/chat") {
+      const conversation = findConversationForUser(user, body.conversationId);
+      if (!conversation) {
+        json(res, 404, { error: "훈련 기록을 찾지 못했습니다." });
+        return;
+      }
       const safeMessages = (body.messages || []).slice(-60);
       if (safeMessages.filter((message) => message.role === "user").length > 30) {
         json(res, 400, { error: "한 번의 훈련에서는 최대 30턴까지 대화할 수 있습니다. 피드백을 받고 새 훈련을 시작해주세요." });
@@ -3280,39 +3285,38 @@ async function handleApi(req, res, url) {
         dynamicInput: prompt.dynamicInput,
         cacheStaticSystem: true
       });
-      const conversation = findConversationForUser(user, body.conversationId);
-      if (conversation) {
-        conversation.messages = [...safeMessages, { role: "assistant", content: text }];
-        conversation.updatedAt = new Date().toISOString();
-        recordUsageEvent({
-          userId: user.id,
-          conversationId: conversation.id,
-          eventType: "chat_message",
-          provider,
-          model,
-          modelType: "chat",
-          input: prompt.input,
-          output: text,
-          usage
-        });
-        await saveDb();
-      }
+      conversation.messages = [...safeMessages, { role: "assistant", content: text }];
+      conversation.updatedAt = new Date().toISOString();
+      recordUsageEvent({
+        userId: user.id,
+        conversationId: conversation.id,
+        eventType: "chat_message",
+        provider,
+        model,
+        modelType: "chat",
+        input: prompt.input,
+        output: text,
+        usage
+      });
+      await saveDb();
       json(res, 200, { text });
       return;
     }
 
     if (path === "/api/feedback") {
       const conversation = findConversationForUser(user, body.conversationId);
+      if (!conversation) {
+        json(res, 404, { error: "훈련 기록을 찾지 못했습니다." });
+        return;
+      }
       if (conversation?.status === "finished" && conversation.feedbackText) {
         json(res, 200, { text: conversation.feedbackText, alreadyFinished: true });
         return;
       }
       const feedbackMessages = body.messages || [];
-      if (conversation) {
-        conversation.messages = feedbackMessages;
-        conversation.updatedAt = new Date().toISOString();
-        await saveDb();
-      }
+      conversation.messages = feedbackMessages;
+      conversation.updatedAt = new Date().toISOString();
+      await saveDb();
       const input = feedbackInputFor(session, persona, feedbackMessages);
       let text = "";
       let usage = {};
@@ -3345,25 +3349,23 @@ async function handleApi(req, res, url) {
         json(res, 502, { error: "피드백 생성에 실패했습니다. 대화 내용은 저장되어 있으니 잠시 후 다시 시도해주세요." });
         return;
       }
-      if (conversation) {
-        conversation.feedbackText = text;
-        conversation.feedbackSummary = summarizeFeedback(text);
-        conversation.status = "finished";
-        conversation.updatedAt = new Date().toISOString();
-        conversation.finishedAt = new Date().toISOString();
-        recordUsageEvent({
-          userId: user.id,
-          conversationId: conversation.id,
-          eventType: "feedback",
-          provider,
-          model,
-          modelType: "feedback",
-          input,
-          output: text,
-          usage
-        });
-        await saveDb();
-      }
+      conversation.feedbackText = text;
+      conversation.feedbackSummary = summarizeFeedback(text);
+      conversation.status = "finished";
+      conversation.updatedAt = new Date().toISOString();
+      conversation.finishedAt = new Date().toISOString();
+      recordUsageEvent({
+        userId: user.id,
+        conversationId: conversation.id,
+        eventType: "feedback",
+        provider,
+        model,
+        modelType: "feedback",
+        input,
+        output: text,
+        usage
+      });
+      await saveDb();
       json(res, 200, { text });
       return;
     }
