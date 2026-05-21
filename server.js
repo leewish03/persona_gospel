@@ -1997,6 +1997,7 @@ function buildSessionBlock(session, persona) {
 }
 
 function buildFeedbackSessionBlock(session, persona) {
+  const template = persona.roleplayTemplate || {};
   return [
     "세션 설정:",
     `- 페르소나: ${persona.name} (${persona.title})`,
@@ -2010,8 +2011,21 @@ function buildFeedbackSessionBlock(session, persona) {
     `- 복음 장벽: ${formatList(persona.gospelBarriers)}`,
     `- 대화 반응 규칙: ${formatList(persona.conversationRules)}`,
     "",
+    "피드백용 심층 단서:",
+    `- 숨은 필요: ${template.personalWorld?.hiddenNeed || "없음"}`,
+    `- 방어 방식: ${template.personalWorld?.protectiveStrategy || "없음"}`,
+    `- 후반 핵심 장벽: ${template.lateSessionTension?.coreQuestion || "없음"}`,
+    compactList(
+      "경험 앵커 요약",
+      (template.experienceAnchors || []).slice(0, 3).map((anchor) => `${anchor.summary || "없음"} -> ${anchor.formedBelief || "없음"}`)
+    ),
+    compactList(
+      "사용자 말의 해석",
+      (template.interpretationRules || []).slice(0, 5).map((rule) => `${rule.userMove || "사용자 발화"}: ${rule.personaHears || "없음"}`)
+    ),
+    "",
     "단기 세션 한계:",
-    formatList(persona.roleplayTemplate?.shortSessionBoundaries)
+    formatList(template.shortSessionBoundaries)
   ].join("\n");
 }
 
