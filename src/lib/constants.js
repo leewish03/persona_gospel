@@ -48,7 +48,7 @@ export const settingImages = {
 };
 
 export const screenMeta = {
-  home: { eyebrow: "Witness Lab", title: "복음 대화 훈련소", action: "훈련 시작" },
+  home: { eyebrow: "SOLOMON LAB", title: "복음 대화 훈련소", action: "훈련 시작" },
   login: { eyebrow: "Account", title: "로그인" },
   profile: { eyebrow: "Profile", title: "기본 정보 입력", action: "저장하고 시작" },
   persona: { eyebrow: "1 / 3", title: "페르소나 선택", action: "다음", secondary: "랜덤 선택" },

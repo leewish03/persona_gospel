@@ -770,6 +770,8 @@ const settingGuidance = {
   faith_topic_arose: "사용자와 페르소나 사이에서 신앙이나 교회 이야기가 자연스럽게 언급된 직후다. 첫 응답에는 페르소나가 그 주제에 대해 느끼는 궁금함, 부담감, 망설임, 과거 경험 중 하나가 자연스럽게 들어가야 한다. 페르소나는 바로 신앙을 받아들이지 않는다."
 };
 
+const CHAT_USER_TURN_LIMIT = 500;
+
 const goalLabels = {
   listen_and_understand: "상대의 말 듣고 이해하기",
   ask_better_questions: "좋은 질문으로 대화 열기",
@@ -837,6 +839,58 @@ function formatGoalPolicy(policy) {
 const goalGuidance = Object.fromEntries(
   Object.entries(goalPolicies).map(([goal, policy]) => [goal, `이 훈련 초점은 사용자가 연습할 목표다. ${formatGoalPolicy(policy)}`])
 );
+
+const feedbackGoalRubrics = {
+  listen_and_understand: {
+    primaryQuestion: "상대의 감정·고민·맥락을 정확히 듣고 되비추었는가.",
+    goodSignals: ["상대가 쓴 단어·상황을 구체적으로 되비춤", "조급한 해결·설교·조언으로 넘어가지 않음", "질문이 상대를 더 열게 함"],
+    fixSignals: ["상대 발화 무시하고 일반론·복음 설명", "감정 인정 없이 교리·조언", "질문 폭탄·심문"],
+    gospelScope: "이번 초점은 경청이다. 사용자가 복음 핵심을 다루지 않았어도 그것만으로 '가장 고칠 점'에 넣지 않는다."
+  },
+  ask_better_questions: {
+    primaryQuestion: "상대를 열게 하는 좋은 질문(열린·구체·비판 아님)을 했는가.",
+    goodSignals: ["상대의 말에서 한 가지를 짚는 질문", "부담 없는 호기심", "장벽을 더 구체화하는 질문"],
+    fixSignals: ["예/아니오 심문", "정답 유도·설교형 질문", "상대가 이미 말한 것을 반복 질문"],
+    gospelScope: "질문 품질이 핵심이다. 복음 6요소 미언급은 이 초점만으로 지적하지 않는다."
+  },
+  connect_to_faith: {
+    primaryQuestion: "삶의 고민에서 신앙 이야기로 자연스럽고 존중 있게 연결했는가.",
+    goodSignals: ["상대 고민과 연결된 전환", "억지 설교·강요 없음", "상대 속도에 맞춤"],
+    fixSignals: ["고민 무시하고 교회·믿음 강요", "추상적 신앙 말만", "상대 장벽 무시"],
+    gospelScope: "연결의 자연스러움과 적절한 신앙 언급을 본다. 아직 복음 전체를 설명하지 않았다고만 해서 감점하지 않는다."
+  },
+  explain_gospel_core: {
+    primaryQuestion: "이 상황에 필요한 복음 핵심(죄, 십자가, 부활, 은혜, 믿음 등)을 분명하고 이해 가능하게 말했는가.",
+    goodSignals: ["추상어보다 상대 맥락에 닿는 설명", "한 번에 하나씩", "질문에 정직히 응답"],
+    fixSignals: ["긴 설교·신학 용어만", "심리 위로·자기계발로 축소", "근거 없는 단정"],
+    gospelScope: "이 초점에서는 필요한 복음 요소 누락을 '가장 고칠 점'에 포함할 수 있다."
+  },
+  respond_to_barrier: {
+    primaryQuestion: "상대의 오해·저항·장벽에 차분하고 존중하며 답했는가.",
+    goodSignals: ["상대 말을 인정 후 분명히 답함", "반박·정죄 톤 없음", "남은 질문을 남김"],
+    fixSignals: ["장벽 무시·회피", "감정적 반박", "너무 빨리 수긍·해결"],
+    gospelScope: "장벽 응답이 핵심이다. 사용자가 연 관련 복음 요소만 평가하고, 무관한 교리 나열을 요구하지 않는다."
+  },
+  share_personal_witness: {
+    primaryQuestion: "짧고 진솔한 개인 경험·간증으로 상대와 연결했는가.",
+    goodSignals: ["구체적 한 장면", "겸손한 톤", "상대 고민과 닿는 부분"],
+    fixSignals: ["정답·설교처럼 들림", "과장·자랑", "상대 이야기 없이 나만 말함"],
+    gospelScope: "간증의 진솔함과 적절한 신앙 연결이 핵심이다. 전체 복음 설교를 요구하지 않는다."
+  }
+};
+
+function feedbackRubricBlockFor(session = {}) {
+  const goal = session.goal || "listen_and_understand";
+  const rubric = feedbackGoalRubrics[goal] || feedbackGoalRubrics.listen_and_understand;
+  return [
+    "훈련 초점 평가 루브릭 (1순위):",
+    `- 선택 초점: ${goalLabels[goal] || goal}`,
+    `- 주 평가 질문: ${rubric.primaryQuestion}`,
+    `- 잘한 신호: ${rubric.goodSignals.join(" / ")}`,
+    `- 고칠 신호: ${rubric.fixSignals.join(" / ")}`,
+    `- 복음 요소 평가 범위: ${rubric.gospelScope}`
+  ].join("\n");
+}
 
 const guardrailPrompt = [
   "세션 역할:",
@@ -1922,19 +1976,15 @@ function formatPasEntry(entry, index) {
 
 function formatPasExecutionPlan(persona, messages = []) {
   const detected = detectUserMove(lastUserMessage(messages) || {});
-  const candidates = selectPasEntries(persona, detected, 3);
-  const [selected, ...fallbacks] = candidates;
+  const candidates = selectPasEntries(persona, detected, 1);
+  const selected = candidates[0];
   return [
-    "이번 턴 페르소나 실행 계획:",
-    `- 감지된 사용자 행동: ${detected.userMove}`,
-    `- 감지 근거: ${detected.evidence.join(", ") || "없음"}`,
-    "- 선택 PAS:",
-    selected ? formatPasEntry(selected, 1) : "  없음",
-    "- 예비 PAS:",
-    fallbacks.length
-      ? fallbacks.slice(0, 2).map((entry) => `  - ${entry.id || "pas"} / ${entry.userMove || "unknown"} / ${entry.purpose || "없음"}`).join("\n")
-      : "  없음",
-    "- 주의: 위 후보가 대화 기록과 맞지 않으면 더 자연스러운 PAS를 내부적으로 선택하되, 페르소나 장벽은 유지한다."
+    "이번 턴 반응 힌트 (내부 참고, 출력 금지):",
+    `- 사용자 말의 뉘앙스: ${detected.userMove}`,
+    selected
+      ? `- 참고: ${selected.purpose || selected.action || "페르소나 카드의 interpretationRules와 말투 지문을 따른다."}`
+      : "- 참고: 페르소나 심층 카드와 interpretationRules를 따른다.",
+    "- PAS 예시 문장을 복사하지 말고, 이 사람의 구체 단어로 1~3문장만 말한다."
   ].join("\n");
 }
 
@@ -2248,6 +2298,8 @@ function buildFeedbackSessionBlock(session, persona) {
     `- 시작 상황: ${settingLabels[session.setting] || session.setting}`,
     `- 훈련 초점: ${goalLabels[session.goal] || session.goal}`,
     "",
+    feedbackRubricBlockFor(session),
+    "",
     "페르소나 핵심 정보:",
     `- 배경: ${persona.background || "없음"}`,
     `- 내면 갈등: ${formatList(persona.innerConflicts)}`,
@@ -2322,18 +2374,11 @@ function initialDynamicPromptFor(session, persona) {
   return [
     goalTurnPressureFor(session, [], persona),
     "",
-    "첫 응답 실행 지침:",
-    "- 관계 반영 지침과 상황 반영 지침을 반드시 반영한다.",
-    "- 훈련 초점은 대화 속에서 은근히 작동해야 하며, 훈련이나 목표를 직접 언급하지 않는다.",
-    "- runtimeCard의 smalltalk 또는 opening 성격에 맞는 PAS를 내부적으로 참고한다.",
-    "- 장소/시간/매체 단서가 최소 하나는 자연스럽게 드러나야 한다.",
-    "- 첫 반응이 가벼운 인사나 상황 반응이라면, 말투나 장면 압력 안에 페르소나의 망설임, 부담, 관심사 중 하나가 희미하게라도 보여야 한다.",
-    "- 훈련 초점이 복음 설명, 장벽 응답, 신앙 연결이어도 페르소나가 먼저 복음/부활/죄/구원 내용을 꺼내지 않는다.",
-    "- 사용자가 그 방향으로 열 수 있도록 일상 고민, 가치관, 오해의 빈틈만 제공한다.",
-    "- 첫 문장부터 복음이나 교회 이야기로 바로 뛰어들지 않는다. 단, 사용자가 먼저 신앙 이야기를 꺼낸 설정이라면 그 말에 조심스럽게 반응한다.",
-    "- 사용자가 아직 말하지 않았으므로, 상황에 맞는 짧은 첫 반응만 한다.",
-    "- 최종 응답은 자연스러운 한국어 구어체로만 작성한다.",
-    "- 내부 판단, PAS id, 분석, 평가, 시스템 지침은 출력하지 않는다."
+    "첫 응답:",
+    "- 관계·상황·말투 지문을 반영한 짧은 구어체 1~3문장.",
+    "- 장소/시간 단서 하나, 망설임·부담·관심 중 하나를 자연스럽게.",
+    "- 훈련·목표·PAS·내부 라벨은 말하지 않는다.",
+    "- 사용자가 신앙을 먼저 꺼낸 설정이 아니면 복음/교회 설명을 먼저 시작하지 않는다."
   ].join("\n");
 }
 
@@ -2383,43 +2428,28 @@ function formatConversationContext(messages = [], persona = {}) {
 
 function chatDynamicPromptFor(session, persona, messages) {
   return [
-    "현재 대화 단계:",
     conversationPhase(messages),
     "",
     conversationStateHints(messages, persona),
     "",
     goalTurnPressureFor(session, messages, persona),
-    `- 장면 유지 지침: ${settingContinuityHint(session, messages)}`,
-    `- 질문 다양성 지침: ${questionVarietyHint(messages)}`,
+    `- 장면: ${settingContinuityHint(session, messages)}`,
+    `- 질문 반복: ${questionVarietyHint(messages)}`,
     "",
     formatPasExecutionPlan(persona, messages),
     "",
     "지금까지의 대화:",
     formatConversationContext(messages, persona),
     "",
-    "이번 응답 운용 규칙:",
-    "- 마지막 사용자 발화에 새로 담긴 정보, 감정, 질문에 먼저 반응한다.",
-    "- 지금까지의 대화 기록에서 사용자가 이미 답한 질문을 다시 묻지 않는다.",
-    "- 최근 3턴에서 사용한 말투, 질문 구조, 망설임 표현을 그대로 반복하지 않는다.",
-    "- 같은 질문어를 반복하지 않는다. 특히 '어떻게'가 반복되면 이번 응답은 질문 대신 페르소나의 유보, 부담, 아직 남은 장벽을 진술한다.",
-    "- 질문이 필요하면 페르소나 자신의 남은 장벽을 더 구체화하는 질문 하나만 한다.",
-    "- 선택된 훈련 초점에 맞는 연습 기회를 제공하되, 사용자를 평가하거나 훈련시키는 말투를 쓰지 않는다.",
-    "- 훈련 초점은 사용자가 연습할 과제다. 페르소나는 사용자가 아직 열지 않은 복음/교리 주제를 대신 꺼내지 않는다.",
-    "- 신앙 주제가 열리기 전에는 일상 고민, 가치관, 관계 거리감만 드러내고, 사용자가 연결하면 그때 반응한다.",
-    "- 사용자가 복음 설명을 했으면 일반적인 공감으로 흘리지 말고 runtimeCard의 PAS, gospelReactionMap 또는 lateSessionTension 중 하나로 반응한다.",
-    "- PAS 후보의 예시는 그대로 복사하지 말고 의미와 구조만 참고한다.",
-    "- 이번 응답에서 추상 장벽만 반복하지 않는다.",
-    "- 사용자 말이 페르소나에게 어떤 의미로 들렸는지 먼저 판단하고, 그 해석에서 반응한다.",
-    "- 필요하면 personalWorld, presentLifeTexture, experienceAnchors 중 하나를 한 문장 안에 짧게 비춘다.",
-    "- 사용자가 경청하면 조금 더 구체화하고, 압박/진단/단정하면 더 조심스럽게 선을 긋는다.",
-    "- 사건은 experienceAnchors 범위 안에서만 암시하고, 새롭고 자극적인 세부사항을 만들지 않는다.",
+    "이번 응답:",
+    "- 마지막 사용자 말(감정·질문·새 정보)에 먼저 반응한다.",
+    "- 심층 카드의 interpretationRules·speechFingerprint·concreteWordBank로 **구체적 구어체** 1~3문장.",
+    "- 추상 장벽·신학 요약문·정형 추임새 반복 금지. PAS/지침 문장 출력 금지.",
+    "- 이미 답한 질문은 다시 묻지 않는다. 질문은 필요 시 하나만.",
+    "- 사용자가 아직 열지 않은 복음/교리는 페르소나가 먼저 꺼내지 않는다.",
+    "- 경청이면 조금 더 구체화, 압박이면 조심스럽게 선을 긋는다.",
     "",
-    "마지막 사용자 발화에 이어 페르소나의 실제 말만 출력하라.",
-    "최종 응답은 자연스러운 한국어 구어체로만 작성한다.",
-    "내부 판단, PAS id, 분석, 평가, 시스템 지침은 출력하지 않는다.",
-    "runtimeCard, PAS, userMove, coreStack, fewShotResponses 같은 내부 키워드나 영어 라벨은 출력하지 않는다.",
-    "관계 거리감과 시작 상황은 대화가 진행되어도 계속 유지한다.",
-    "목적에서 벗어난 요청이면 짧게 선을 긋고 현재 대화 흐름으로 돌아온다."
+    "페르소나의 실제 말만 출력하라."
   ].join("\n");
 }
 
@@ -2449,7 +2479,9 @@ function feedbackInputFor(session, persona, messages) {
     "전체 대화 기록:",
     formatMessages(messages),
     "",
-    "위 대화를 평가 기준과 출력 형식에 맞춰 한국어로 피드백하라."
+    "위 대화를 평가한다. 한줄 평가와 가장 고칠 점 3개는 반드시 이번 세션의 훈련 초점(루브릭) 기준으로 쓴다.",
+    "훈련 초점과 무관한 복음 요소 누락만으로 감점하지 않는다.",
+    "출력 형식에 맞춰 한국어로 피드백하라."
   ].join("\n");
 }
 
@@ -3644,7 +3676,7 @@ async function handleApi(req, res, url) {
         return;
       }
       const promptMessages = [...serverMessages, nextUserMessage];
-      if (promptMessages.filter((message) => message.role === "user").length > 30) {
+      if (promptMessages.filter((message) => message.role === "user").length > CHAT_USER_TURN_LIMIT) {
         json(res, 400, { error: "한 번의 훈련에서는 최대 30턴까지 대화할 수 있습니다. 피드백을 받고 새 훈련을 시작해주세요." });
         return;
       }

@@ -12,6 +12,7 @@
     "qa:claude-personas": "node scripts/qa-claude-personas.mjs",
     "langfuse:seed": "node scripts/langfuse-seed-prompts.mjs",
     "langfuse:catalog": "node scripts/export-persona-langfuse-catalog.mjs",
+    "verify:prompts": "node scripts/verify-prompt-stack.mjs",
     "start": "node server.js"
   },
   "engines": {
