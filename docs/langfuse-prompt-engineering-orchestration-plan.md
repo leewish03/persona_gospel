@@ -1,7 +1,30 @@
 # Langfuse 기반 프롬프트 엔지니어링 개선 계획
 
-작성일: 2026-05-23  
-관련 문서: `docs/persona-prompt-engineering-improvement-plan.md`, `docs/persona-prompt-engineering-implementation-spec.md`
+작성일: 2026-05-23 (상태 갱신: 2026-05-23 세션)  
+관련 문서: `docs/persona-prompt-engineering-improvement-plan.md`, `docs/persona-prompt-engineering-implementation-spec.md`, `docs/prompt-engineering-with-langfuse.md`
+
+## 0. 현재 스냅샷 (2026-05-23)
+
+| 항목 | 상태 |
+|------|------|
+| **master** | PR #14 (Langfuse 트레이싱·2종 시스템 프롬프트 fetch) + PR #16 (SOLOMON LAB, 500턴, Mobile Training 제거) **머지 완료** |
+| **PR #15** `cursor/langfuse-prompt-plan-2994` | 5·6·7번 PE, managed prompts, seed runner, verify — **머지 금지** (Langfuse 실험·참고용) |
+| **Langfuse seed (master)** | Cloud Agent VM에서 **완료** — 8개 프롬프트 v1, `production` 라벨 |
+| **환경 변수** | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` 주입됨 (`LANGFUSE_HOST` 별칭 지원) |
+| **동적 프롬프트** | master: `server.js` 하드코딩 — PR #15에만 Langfuse `chat-dynamic` 등 |
+| **Orchestrate** | `CURSOR_API_KEY` 미설정 — kickoff는 로컬 IDE에서 |
+
+**Langfuse에 올라간 프롬프트 (master seed):**
+
+- `roleplay/persona-system`, `roleplay/feedback-system`
+- `persona/{id}/runtime-config` × 6
+
+**아직 seed 안 된 것 (PR #15 catalog, 실험 시 수동 seed):**
+
+- `roleplay/chat-dynamic`, `roleplay/chat-initial`, `roleplay/pas-turn-hint`
+- `roleplay/feedback-rubric/*` (6 goals)
+
+---
 
 ## 1. 요약
 
@@ -11,15 +34,15 @@
 **Langfuse**는 프롬프트 버전 관리, 트레이스 관측, 데이터셋/실험, 실패 분석을 한곳에 모은다.  
 **Orchestrate**(`/orchestrate`)는 그 통합 작업을 병렬 Cloud Agent로 나누어 실행한다.
 
-현재 이 환경에는 `LANGFUSE_*`, `CURSOR_API_KEY`가 설정되어 있지 않다. 구현 전에 로컬/CI 시크릿에 아래를 추가해야 한다.
+필수 시크릿:
 
 ```bash
-# Langfuse (UI → Settings → API Keys)
+# Langfuse (UI → Settings → API Keys) — Render + Cursor Cloud Agent Secrets
 export LANGFUSE_PUBLIC_KEY=pk-lf-...
 export LANGFUSE_SECRET_KEY=sk-lf-...
-export LANGFUSE_HOST=https://cloud.langfuse.com   # US: https://us.cloud.langfuse.com
+export LANGFUSE_HOST=https://cloud.langfuse.com   # 또는 LANGFUSE_BASE_URL (동일)
 
-# Orchestrate kickoff (Cursor Dashboard → Integrations)
+# Orchestrate kickoff (Cursor Dashboard → Integrations) — 로컬 IDE만
 export CURSOR_API_KEY=...
 ```
 
@@ -42,11 +65,11 @@ export CURSOR_API_KEY=...
 
 ### 2.2 구조적 한계 (Langfuse가 해결할 문제)
 
-1. **프롬프트와 배포가 결합** — `prompts/*.md`나 `guardrailPrompt` 문자열 변경마다 `server.js` 재배포가 필요하다.
-2. **실험 재현성 부족** — 어떤 프롬프트 버전 + 어떤 `pasMap` + 어떤 모델 설정이 특정 QA 실패를 만들었는지 UI에서 한 번에 보기 어렵다.
-3. **동적 블록은 코드에만 존재** — `conversationStateHints`, `formatPasExecutionPlan` 출력은 Git에는 없고 런타임에만 생성된다. 실패 분석 시 “실제로 모델에 들어간 전체 입력”을 찾기 어렵다.
-4. **평가 루프가 분산** — QA JSON/MD는 `docs/qa-runs/`에 쌓이지만 Langfuse 데이터셋·스코어·annotation queue와 연결되지 않는다.
-5. **Langfuse 미통합** — `package.json`에 Langfuse SDK 없음, `.env.example`에 Langfuse 변수 없음.
+1. **정적 프롬프트는 해소됨, 동적 블록은 아직 코드 결합** — `persona-system`/`feedback-system`은 Langfuse fetch 가능. `chatDynamicPromptFor`, `guardrailPrompt` 등은 master에서 여전히 `server.js` 재배포 필요.
+2. **실험 재현성 부족** — trace에 prompt version은 붙지만, QA 24케이스와 Langfuse Dataset/Experiment는 아직 미연동.
+3. **동적 블록은 trace metadata로만 부분 가시** — `dynamicInputChars`, `instructionsPreview`는 trace에 있으나 Playground에서 전체 조립 미리보기는 PR #15 수준 필요.
+4. **평가 루프가 분산** — QA JSON/MD는 `docs/qa-runs/`에 쌓이지만 Langfuse scorer/annotation queue와 연결되지 않음.
+5. **PR #15와 master 분리** — PE 개선안(5·6·7)은 브랜치에만 있고 prod 코드에 merge하지 않기로 함 → Langfuse UI에서 staging 실험 후 선택적 채택.
 
 ### 2.3 프롬프트 인벤토리 (마이그레이션 대상)
 
@@ -242,11 +265,30 @@ bun cli.ts kickoff "Langfuse 통합으로 복음 대화 훈련소 프롬프트 �
 
 ---
 
-## 7. 다음 액션 (사용자)
+## 7. 다음 액션 (우선순위)
 
-1. Langfuse 프로젝트 생성 → API 키 → `LANGFUSE_HOST` 지역 확인  
-2. Render(또는 로컬)에 env 추가  
-3. 로컬 IDE에서 `/orchestrate` kickoff (위 4.1) 또는 단일 agent로 Phase 0 PR  
-4. Phase 0 merge 후 Playground에서 `persona-system` 1차 문구 실험 → `staging` → Experiment → `production` 승격
+### 즉시 (운영·PE 루프 시작)
 
-이 문서는 **계획**이다. 구현 PR은 Phase별로 나누는 것이 안전하다.
+1. **Render** — `LANGFUSE_*` 3종 + `LANGFUSE_PROMPT_LABEL=production` 확인 (이미 render.yaml에 정의됨)
+2. **Langfuse UI** — Prompts에서 seed된 8개 v1 확인; trace 1건 생성 후 generation에 prompt version 링크 확인
+3. **일상 PE** — `docs/prompt-engineering-with-langfuse.md` 루프: Playground → `staging` → Render `LANGFUSE_PROMPT_LABEL=staging` → trace 검토 → `production` 승격
+
+### 단기 (코드 merge 없이)
+
+4. PR #15 브랜치에서 **추가 seed만** 실행 (managed catalog 11종 + persona config) — prod `server.js`는 master 유지
+5. PR #15의 `prompts/langfuse/*.md`를 Langfuse Playground에 복사해 **staging 실험** (앱 동작 변경 없음)
+
+### 중기 (Orchestrate 또는 단일 PR)
+
+6. **Phase 3** — QA 24케이스 → Langfuse Dataset import + experiment runner (`scripts/langfuse-qa-experiment.mjs`)
+7. **Phase 2 선택적 채택** — PR #15에서 `managed-prompts` + fetch만 cherry-pick (프롬프트 문구 diff는 Langfuse UI에서 관리)
+8. `.github/workflows/langfuse-seed.yml` — master에 workflow만 cherry-pick (키는 GitHub Secrets)
+
+### Orchestrate kickoff (로컬 IDE)
+
+```bash
+# cursor-sdk skill 참고 — CURSOR_API_KEY 필요
+/orchestrate Langfuse PE: master 유지, PR15 merge 금지. Dataset+experiment(T5), trace 검증(T6), staging PE 가이드 문서화.
+```
+
+이 문서는 **계획**이다. PR #15 전체 merge는 사용자 명시로 금지; Phase별·cherry-pick으로 진행한다.
