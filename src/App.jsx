@@ -300,7 +300,7 @@ function HomeScreen({ state, actions }) {
       <img className="absolute inset-0 size-full select-none object-cover object-center" draggable="false" src="/assets/home-cover.jpg" alt="카페에서 진지하게 대화하는 두 사람" />
       <div className="absolute inset-0 bg-gradient-to-b from-black/25 via-black/20 to-black/75" />
       <div className="absolute inset-x-0 top-0 z-10 px-5 pt-[max(1rem,env(safe-area-inset-top))] text-white">
-        <p className="text-xs font-black uppercase tracking-wide text-white/80">Witness Lab</p>
+        <p className="text-xs font-black uppercase tracking-wide text-white/80">SOLOMON LAB</p>
         <h1 className="mt-1 text-lg font-black">복음 대화 훈련소</h1>
       </div>
       <div
@@ -310,7 +310,6 @@ function HomeScreen({ state, actions }) {
         )}
       >
         <div>
-          <Badge variant="secondary" className="mb-3 bg-white/90 text-stone-900">Mobile Training</Badge>
           <h2 className="text-[clamp(1.65rem,8vw,2.6rem)] font-black leading-tight">복음 전도 대화,<br />AI와 먼저 연습해보세요</h2>
           <p className="mt-3 max-w-sm text-sm leading-6 text-white/85">실제 전도 상황을 AI 페르소나와 연습하고, 대화 후 피드백 리포트로 더 나은 질문과 복음 전달 방식을 점검하세요.</p>
           {state.hasUser ? <p className="mt-3 text-xs font-semibold text-white/70">{state.auth.user.profile?.name || state.auth.user.displayName}님, 이어서 훈련할 수 있습니다.</p> : null}
