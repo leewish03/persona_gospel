@@ -5,9 +5,16 @@ import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import {
+  buildPersonaTraceContext,
+  initLangfuse,
+  shutdownLangfuse,
+  traceModelCall
+} from "./lib/langfuse-tracing.js";
 
 const rootDir = fileURLToPath(new URL(".", import.meta.url));
 loadLocalEnv(join(rootDir, ".env"));
+void initLangfuse();
 const publicDir = join(rootDir, "public");
 const isProduction = globalThis.process?.env?.NODE_ENV === "production";
 const port = Number(globalThis.process?.env?.PORT || (isProduction ? 10000 : 4173));
@@ -1438,38 +1445,49 @@ async function callModelWithUsage({
   staticSystemBlocks = [],
   dynamicInput = "",
   cacheStaticSystem = false,
-  overrides = {}
+  overrides = {},
+  traceContext = null
 }) {
   const settings = { ...modelSettingsFor(modelType), ...overrides };
-  const apiKey = assertProviderKey(settings.provider);
-  if (settings.provider === "anthropic") {
-    const result = await callAnthropicWithUsage({
+  const invoke = async () => {
+    const apiKey = assertProviderKey(settings.provider);
+    if (settings.provider === "anthropic") {
+      const result = await callAnthropicWithUsage({
+        apiKey,
+        model: settings.model,
+        instructions,
+        input: dynamicInput || input,
+        staticSystemBlocks,
+        cacheStaticSystem,
+        maxOutputTokens: settings.maxOutputTokens,
+        temperature: settings.temperature,
+        topP: settings.topP,
+        thinkingType: settings.thinkingType,
+        thinkingBudgetTokens: settings.thinkingBudgetTokens,
+        thinkingDisplay: settings.thinkingDisplay
+      });
+      return { ...result, provider: settings.provider, model: settings.model };
+    }
+    const result = await callOpenAIWithUsage({
       apiKey,
       model: settings.model,
       instructions,
-      input: dynamicInput || input,
-      staticSystemBlocks,
-      cacheStaticSystem,
+      input: input || [...staticSystemBlocks, dynamicInput].filter(Boolean).join("\n\n"),
       maxOutputTokens: settings.maxOutputTokens,
+      reasoningEffort: settings.reasoningEffort,
       temperature: settings.temperature,
-      topP: settings.topP,
-      thinkingType: settings.thinkingType,
-      thinkingBudgetTokens: settings.thinkingBudgetTokens,
-      thinkingDisplay: settings.thinkingDisplay
+      topP: settings.topP
     });
     return { ...result, provider: settings.provider, model: settings.model };
-  }
-  const result = await callOpenAIWithUsage({
-    apiKey,
+  };
+
+  if (!traceContext) return invoke();
+  return traceModelCall({
+    ...traceContext,
     model: settings.model,
-    instructions,
-    input: input || [...staticSystemBlocks, dynamicInput].filter(Boolean).join("\n\n"),
-    maxOutputTokens: settings.maxOutputTokens,
-    reasoningEffort: settings.reasoningEffort,
-    temperature: settings.temperature,
-    topP: settings.topP
+    modelType,
+    run: invoke
   });
-  return { ...result, provider: settings.provider, model: settings.model };
 }
 
 async function callOpenAIWithUsage({
@@ -3496,7 +3514,15 @@ async function handleApi(req, res, url) {
         input: prompt.input,
         staticSystemBlocks: prompt.staticSystemBlocks,
         dynamicInput: prompt.dynamicInput,
-        cacheStaticSystem: true
+        cacheStaticSystem: true,
+        traceContext: buildPersonaTraceContext({
+          eventType: "chat_start",
+          userId: user.id,
+          session: sessionWithScene,
+          persona,
+          messages: [],
+          prompt: { ...prompt, instructions: personaPrompt }
+        })
       });
       const conversation = createConversation({
         userId: user.id,
@@ -3572,7 +3598,16 @@ async function handleApi(req, res, url) {
         input: prompt.input,
         staticSystemBlocks: prompt.staticSystemBlocks,
         dynamicInput: prompt.dynamicInput,
-        cacheStaticSystem: true
+        cacheStaticSystem: true,
+        traceContext: buildPersonaTraceContext({
+          eventType: "chat_message",
+          userId: user.id,
+          conversationId: conversation.id,
+          session,
+          persona,
+          messages: promptMessages,
+          prompt: { ...prompt, instructions: personaPrompt }
+        })
       });
       conversation.messages = [...promptMessages, { role: "assistant", content: text }];
       conversation.updatedAt = new Date().toISOString();
@@ -3643,7 +3678,16 @@ async function handleApi(req, res, url) {
           result = await callModelWithUsage({
             modelType: "feedback",
             instructions: feedbackPrompt,
-            input
+            input,
+            traceContext: buildPersonaTraceContext({
+              eventType: "feedback",
+              userId: user.id,
+              conversationId: conversation.id,
+              session,
+              persona,
+              messages: feedbackMessages,
+              prompt: { dynamicInput: input, instructions: feedbackPrompt }
+            })
           });
         } catch (error) {
           if (!isMaxOutputIncomplete(error)) throw error;
@@ -3652,7 +3696,16 @@ async function handleApi(req, res, url) {
             modelType: "feedback",
             instructions: feedbackPrompt,
             input,
-            overrides: { maxOutputTokens: Math.min(64000, Math.max(5200, currentMax * 2)) }
+            overrides: { maxOutputTokens: Math.min(64000, Math.max(5200, currentMax * 2)) },
+            traceContext: buildPersonaTraceContext({
+              eventType: "feedback_retry",
+              userId: user.id,
+              conversationId: conversation.id,
+              session,
+              persona,
+              messages: feedbackMessages,
+              prompt: { dynamicInput: input, instructions: feedbackPrompt }
+            })
           });
         }
         text = result.text;
@@ -3779,3 +3832,11 @@ const server = createServer(async (req, res) => {
 server.listen(port, host, () => {
   console.log(`Gospel conversation simulator running at http://${host}:${port}`);
 });
+
+if (globalThis.process?.on) {
+  for (const signal of ["SIGINT", "SIGTERM"]) {
+    globalThis.process.once(signal, () => {
+      void shutdownLangfuse().finally(() => globalThis.process.exit(0));
+    });
+  }
+}
