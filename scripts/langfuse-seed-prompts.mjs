@@ -93,7 +93,13 @@ async function main() {
   console.log(dryRun ? "Dry run complete." : "Langfuse seed complete.");
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+main()
+  .then(async () => {
+    const { flushLangfuse, shutdownLangfuse } = await import("../lib/langfuse-tracing.js");
+    await flushLangfuse();
+    await shutdownLangfuse();
+  })
+  .catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });

@@ -7,7 +7,9 @@ import { fileURLToPath } from "node:url";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import {
   buildPersonaTraceContext,
+  flushLangfuse,
   initLangfuse,
+  isLangfuseEnabled,
   shutdownLangfuse,
   traceModelCall
 } from "./lib/langfuse-tracing.js";
@@ -15,7 +17,6 @@ import { createPromptRegistry } from "./lib/langfuse-prompts.js";
 
 const rootDir = fileURLToPath(new URL(".", import.meta.url));
 loadLocalEnv(join(rootDir, ".env"));
-void initLangfuse();
 const publicDir = join(rootDir, "public");
 const isProduction = globalThis.process?.env?.NODE_ENV === "production";
 const port = Number(globalThis.process?.env?.PORT || (isProduction ? 10000 : 4173));
@@ -1503,6 +1504,7 @@ async function callModelWithUsage({
     ...traceContext,
     langfusePrompt: langfusePrompt || traceContext.langfusePrompt || null,
     model: settings.model,
+    provider: settings.provider,
     modelType,
     run: invoke
   });
@@ -2839,6 +2841,17 @@ async function runOpeningLineJob(jobId, actor) {
           instructions: systemPrompt.text,
           input,
           langfusePrompt: systemPrompt.langfusePrompt,
+          traceContext: buildPersonaTraceContext({
+            eventType: "opening_line_batch",
+            userId: actor?.id || "",
+            session: { personaId, goal: caseItems[0]?.goal, relationship: caseItems[0]?.relationship, setting: caseItems[0]?.setting },
+            persona,
+            messages: [],
+            prompt: { instructions: systemPrompt.text, dynamicInput: input },
+            langfusePrompt: systemPrompt.langfusePrompt,
+            promptSource: systemPrompt.source,
+            promptVersion: systemPrompt.version
+          }),
           overrides: {
             maxOutputTokens: Math.max(3200, Math.min(6000, Number(settings.maxOutputTokens || 3200))),
             thinkingType: "disabled",
@@ -3502,7 +3515,10 @@ async function handleAppApi(req, res, url) {
   if (path === "/api/admin/langfuse-prompts" && req.method === "GET") {
     const user = requireAdmin(req, res);
     if (!user) return true;
-    json(res, 200, await promptRegistry.status());
+    json(res, 200, {
+      ...(await promptRegistry.status()),
+      tracingEnabled: isLangfuseEnabled()
+    });
     return true;
   }
 
@@ -3835,7 +3851,7 @@ async function serveStatic(req, res, pathname) {
 const server = createServer(async (req, res) => {
   const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
   if (req.method === "GET" && url.pathname === "/healthz") {
-    json(res, 200, { ok: true });
+    json(res, 200, { ok: true, langfuseTracing: isLangfuseEnabled() });
     return;
   }
 
@@ -3895,3 +3911,7 @@ if (globalThis.process?.on) {
     });
   }
 }
+
+void initLangfuse().then((ready) => {
+  if (ready) console.log("[langfuse] tracing enabled");
+});

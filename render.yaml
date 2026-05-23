@@ -59,3 +59,5 @@ services:
         value: production
       - key: LANGFUSE_PROMPT_REFRESH_MS
         value: "60000"
+      - key: LANGFUSE_TRACING_ENABLED
+        value: "true"
