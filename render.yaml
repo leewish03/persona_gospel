@@ -49,3 +49,13 @@ services:
         sync: false
       - key: KAKAO_CLIENT_SECRET
         sync: false
+      - key: LANGFUSE_PUBLIC_KEY
+        sync: false
+      - key: LANGFUSE_SECRET_KEY
+        sync: false
+      - key: LANGFUSE_HOST
+        sync: false
+      - key: LANGFUSE_PROMPT_LABEL
+        value: production
+      - key: LANGFUSE_PROMPT_REFRESH_MS
+        value: "60000"

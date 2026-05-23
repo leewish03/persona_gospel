@@ -10,12 +10,18 @@
     "smoke": "node scripts/smoke-api.mjs",
     "qa:walkthrough": "node scripts/qa-full-walkthrough.mjs",
     "qa:claude-personas": "node scripts/qa-claude-personas.mjs",
+    "langfuse:seed": "node scripts/langfuse-seed-prompts.mjs",
+    "langfuse:catalog": "node scripts/export-persona-langfuse-catalog.mjs",
     "start": "node server.js"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
+    "@langfuse/client": "^5.3.0",
+    "@langfuse/otel": "^5.3.0",
+    "@langfuse/tracing": "^5.3.0",
+    "@opentelemetry/sdk-node": "^0.218.0",
     "@radix-ui/react-accordion": "^1.2.12",
     "@radix-ui/react-avatar": "^1.1.11",
     "@radix-ui/react-dialog": "^1.1.15",

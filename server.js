@@ -5,9 +5,17 @@ import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import {
+  buildPersonaTraceContext,
+  initLangfuse,
+  shutdownLangfuse,
+  traceModelCall
+} from "./lib/langfuse-tracing.js";
+import { createPromptRegistry } from "./lib/langfuse-prompts.js";
 
 const rootDir = fileURLToPath(new URL(".", import.meta.url));
 loadLocalEnv(join(rootDir, ".env"));
+void initLangfuse();
 const publicDir = join(rootDir, "public");
 const isProduction = globalThis.process?.env?.NODE_ENV === "production";
 const port = Number(globalThis.process?.env?.PORT || (isProduction ? 10000 : 4173));
@@ -102,9 +110,24 @@ const MIME_TYPES = {
   ".svg": "image/svg+xml; charset=utf-8"
 };
 
-const personaPrompt = await readFile(join(rootDir, "prompts", "persona-system-prompt.md"), "utf8");
-const feedbackPrompt = await readFile(join(rootDir, "prompts", "feedback-prompt.md"), "utf8");
+const filePersonaPrompt = await readFile(join(rootDir, "prompts", "persona-system-prompt.md"), "utf8");
+const fileFeedbackPrompt = await readFile(join(rootDir, "prompts", "feedback-prompt.md"), "utf8");
+const promptRegistry = createPromptRegistry({
+  rootDir,
+  fallbacks: {
+    "roleplay/persona-system": filePersonaPrompt,
+    "roleplay/feedback-system": fileFeedbackPrompt
+  }
+});
 const personas = JSON.parse(await readFile(join(rootDir, "data", "personas.json"), "utf8"));
+
+async function personaSystemPrompt() {
+  return promptRegistry.get("roleplay/persona-system");
+}
+
+async function feedbackSystemPrompt() {
+  return promptRegistry.get("roleplay/feedback-system");
+}
 const defaultSettings = {
   donation: {
     title: "후원",
@@ -1438,38 +1461,51 @@ async function callModelWithUsage({
   staticSystemBlocks = [],
   dynamicInput = "",
   cacheStaticSystem = false,
-  overrides = {}
+  overrides = {},
+  traceContext = null,
+  langfusePrompt = null
 }) {
   const settings = { ...modelSettingsFor(modelType), ...overrides };
-  const apiKey = assertProviderKey(settings.provider);
-  if (settings.provider === "anthropic") {
-    const result = await callAnthropicWithUsage({
+  const invoke = async () => {
+    const apiKey = assertProviderKey(settings.provider);
+    if (settings.provider === "anthropic") {
+      const result = await callAnthropicWithUsage({
+        apiKey,
+        model: settings.model,
+        instructions,
+        input: dynamicInput || input,
+        staticSystemBlocks,
+        cacheStaticSystem,
+        maxOutputTokens: settings.maxOutputTokens,
+        temperature: settings.temperature,
+        topP: settings.topP,
+        thinkingType: settings.thinkingType,
+        thinkingBudgetTokens: settings.thinkingBudgetTokens,
+        thinkingDisplay: settings.thinkingDisplay
+      });
+      return { ...result, provider: settings.provider, model: settings.model };
+    }
+    const result = await callOpenAIWithUsage({
       apiKey,
       model: settings.model,
       instructions,
-      input: dynamicInput || input,
-      staticSystemBlocks,
-      cacheStaticSystem,
+      input: input || [...staticSystemBlocks, dynamicInput].filter(Boolean).join("\n\n"),
       maxOutputTokens: settings.maxOutputTokens,
+      reasoningEffort: settings.reasoningEffort,
       temperature: settings.temperature,
-      topP: settings.topP,
-      thinkingType: settings.thinkingType,
-      thinkingBudgetTokens: settings.thinkingBudgetTokens,
-      thinkingDisplay: settings.thinkingDisplay
+      topP: settings.topP
     });
     return { ...result, provider: settings.provider, model: settings.model };
-  }
-  const result = await callOpenAIWithUsage({
-    apiKey,
+  };
+
+  if (!traceContext) return invoke();
+  return traceModelCall({
+    ...traceContext,
+    langfusePrompt: langfusePrompt || traceContext.langfusePrompt || null,
     model: settings.model,
-    instructions,
-    input: input || [...staticSystemBlocks, dynamicInput].filter(Boolean).join("\n\n"),
-    maxOutputTokens: settings.maxOutputTokens,
-    reasoningEffort: settings.reasoningEffort,
-    temperature: settings.temperature,
-    topP: settings.topP
+    modelType,
+    run: invoke
   });
-  return { ...result, provider: settings.provider, model: settings.model };
 }
 
 async function callOpenAIWithUsage({
@@ -2782,6 +2818,7 @@ async function runOpeningLineJob(jobId, actor) {
       throw new Error("현재 챗봇 모델 공급자가 Anthropic이 아닙니다. 관리자 모델 설정을 Claude로 바꾼 뒤 실행하세요.");
     }
     assertProviderKey("anthropic");
+    const systemPrompt = await personaSystemPrompt();
     const casesByPersona = new Map();
     for (const item of job.cases) {
       const list = casesByPersona.get(item.personaId) || [];
@@ -2799,8 +2836,9 @@ async function runOpeningLineJob(jobId, actor) {
       try {
         const { text, usage, model, provider } = await callModelWithUsage({
           modelType: "chat",
-          instructions: personaPrompt,
+          instructions: systemPrompt.text,
           input,
+          langfusePrompt: systemPrompt.langfusePrompt,
           overrides: {
             maxOutputTokens: Math.max(3200, Math.min(6000, Number(settings.maxOutputTokens || 3200))),
             thinkingType: "disabled",
@@ -2828,8 +2866,9 @@ async function runOpeningLineJob(jobId, actor) {
           const repairInput = openingLineRepairInputFor(persona, needsRepair);
           const repair = await callModelWithUsage({
             modelType: "chat",
-            instructions: personaPrompt,
+            instructions: systemPrompt.text,
             input: repairInput,
+            langfusePrompt: systemPrompt.langfusePrompt,
             overrides: {
               maxOutputTokens: Math.max(1200, Math.min(3000, Number(settings.maxOutputTokens || 3000))),
               thinkingType: "disabled",
@@ -3460,6 +3499,21 @@ async function handleAppApi(req, res, url) {
     return true;
   }
 
+  if (path === "/api/admin/langfuse-prompts" && req.method === "GET") {
+    const user = requireAdmin(req, res);
+    if (!user) return true;
+    json(res, 200, await promptRegistry.status());
+    return true;
+  }
+
+  if (path === "/api/admin/langfuse-prompts/refresh" && req.method === "POST") {
+    const user = requireAdmin(req, res);
+    if (!user) return true;
+    promptRegistry.clear();
+    json(res, 200, await promptRegistry.status());
+    return true;
+  }
+
   if (path === "/api/admin/export" && req.method === "GET") {
     const user = requireAdmin(req, res);
     if (!user) return true;
@@ -3489,14 +3543,27 @@ async function handleApi(req, res, url) {
 
     if (path === "/api/start") {
       const sessionWithScene = { ...session, visibleScene: visibleSceneFor(session, persona) };
+      const systemPrompt = await personaSystemPrompt();
       const prompt = roleplayPromptPartsFor(sessionWithScene, persona, [], { initial: true });
       const { text, usage, model, provider } = await callModelWithUsage({
         modelType: "chat",
-        instructions: personaPrompt,
+        instructions: systemPrompt.text,
         input: prompt.input,
         staticSystemBlocks: prompt.staticSystemBlocks,
         dynamicInput: prompt.dynamicInput,
-        cacheStaticSystem: true
+        cacheStaticSystem: true,
+        langfusePrompt: systemPrompt.langfusePrompt,
+        traceContext: buildPersonaTraceContext({
+          eventType: "chat_start",
+          userId: user.id,
+          session: sessionWithScene,
+          persona,
+          messages: [],
+          langfusePrompt: systemPrompt.langfusePrompt,
+          promptSource: systemPrompt.source,
+          promptVersion: systemPrompt.version,
+          prompt: { ...prompt, instructions: systemPrompt.text }
+        })
       });
       const conversation = createConversation({
         userId: user.id,
@@ -3565,14 +3632,28 @@ async function handleApi(req, res, url) {
         json(res, 400, { error: "한 번의 훈련에서는 최대 30턴까지 대화할 수 있습니다. 피드백을 받고 새 훈련을 시작해주세요." });
         return;
       }
+      const systemPrompt = await personaSystemPrompt();
       const prompt = roleplayPromptPartsFor(session, persona, promptMessages);
       const { text, usage, model, provider } = await callModelWithUsage({
         modelType: "chat",
-        instructions: personaPrompt,
+        instructions: systemPrompt.text,
         input: prompt.input,
         staticSystemBlocks: prompt.staticSystemBlocks,
         dynamicInput: prompt.dynamicInput,
-        cacheStaticSystem: true
+        cacheStaticSystem: true,
+        langfusePrompt: systemPrompt.langfusePrompt,
+        traceContext: buildPersonaTraceContext({
+          eventType: "chat_message",
+          userId: user.id,
+          conversationId: conversation.id,
+          session,
+          persona,
+          messages: promptMessages,
+          langfusePrompt: systemPrompt.langfusePrompt,
+          promptSource: systemPrompt.source,
+          promptVersion: systemPrompt.version,
+          prompt: { ...prompt, instructions: systemPrompt.text }
+        })
       });
       conversation.messages = [...promptMessages, { role: "assistant", content: text }];
       conversation.updatedAt = new Date().toISOString();
@@ -3633,6 +3714,7 @@ async function handleApi(req, res, url) {
       conversation.updatedAt = new Date().toISOString();
       await saveDb();
       const input = feedbackInputFor(session, persona, feedbackMessages);
+      const feedbackPromptEntry = await feedbackSystemPrompt();
       let text = "";
       let usage = {};
       let model = "";
@@ -3642,17 +3724,43 @@ async function handleApi(req, res, url) {
         try {
           result = await callModelWithUsage({
             modelType: "feedback",
-            instructions: feedbackPrompt,
-            input
+            instructions: feedbackPromptEntry.text,
+            input,
+            langfusePrompt: feedbackPromptEntry.langfusePrompt,
+            traceContext: buildPersonaTraceContext({
+              eventType: "feedback",
+              userId: user.id,
+              conversationId: conversation.id,
+              session,
+              persona,
+              messages: feedbackMessages,
+              langfusePrompt: feedbackPromptEntry.langfusePrompt,
+              promptSource: feedbackPromptEntry.source,
+              promptVersion: feedbackPromptEntry.version,
+              prompt: { dynamicInput: input, instructions: feedbackPromptEntry.text }
+            })
           });
         } catch (error) {
           if (!isMaxOutputIncomplete(error)) throw error;
           const currentMax = Number(modelSettingsFor("feedback").maxOutputTokens || defaultSettings.ai.feedback.maxOutputTokens || 2600);
           result = await callModelWithUsage({
             modelType: "feedback",
-            instructions: feedbackPrompt,
+            instructions: feedbackPromptEntry.text,
             input,
-            overrides: { maxOutputTokens: Math.min(64000, Math.max(5200, currentMax * 2)) }
+            langfusePrompt: feedbackPromptEntry.langfusePrompt,
+            overrides: { maxOutputTokens: Math.min(64000, Math.max(5200, currentMax * 2)) },
+            traceContext: buildPersonaTraceContext({
+              eventType: "feedback_retry",
+              userId: user.id,
+              conversationId: conversation.id,
+              session,
+              persona,
+              messages: feedbackMessages,
+              langfusePrompt: feedbackPromptEntry.langfusePrompt,
+              promptSource: feedbackPromptEntry.source,
+              promptVersion: feedbackPromptEntry.version,
+              prompt: { dynamicInput: input, instructions: feedbackPromptEntry.text }
+            })
           });
         }
         text = result.text;
@@ -3779,3 +3887,11 @@ const server = createServer(async (req, res) => {
 server.listen(port, host, () => {
   console.log(`Gospel conversation simulator running at http://${host}:${port}`);
 });
+
+if (globalThis.process?.on) {
+  for (const signal of ["SIGINT", "SIGTERM"]) {
+    globalThis.process.once(signal, () => {
+      void shutdownLangfuse().finally(() => globalThis.process.exit(0));
+    });
+  }
+}
