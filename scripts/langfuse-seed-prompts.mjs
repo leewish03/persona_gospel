@@ -1,18 +1,22 @@
 #!/usr/bin/env node
 /**
- * Upload Persona Gospel prompts + per-persona config stubs to Langfuse.
+ * Upload Persona Gospel prompts to Langfuse (5·6·7번 포함).
  * Requires LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST (or LANGFUSE_BASE_URL).
  *
- *   node scripts/langfuse-seed-prompts.mjs
- *   node scripts/langfuse-seed-prompts.mjs --dry-run
+ *   npm run langfuse:seed
+ *   npm run langfuse:seed -- --dry-run
+ *   npm run langfuse:seed -- --label staging
  */
 
 import { readFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { MANAGED_PROMPTS, promptFilePath } from "../lib/managed-prompts.js";
 
 const rootDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const dryRun = process.argv.includes("--dry-run");
+const labelArg = process.argv.find((a) => a.startsWith("--label="));
+const labels = labelArg ? [labelArg.split("=")[1]] : ["production", "staging"];
 
 function requireEnv(name) {
   const value = process.env[name] || (name === "LANGFUSE_HOST" ? process.env.LANGFUSE_BASE_URL : "");
@@ -24,34 +28,32 @@ function requireEnv(name) {
 }
 
 async function main() {
-  requireEnv("LANGFUSE_PUBLIC_KEY");
-  requireEnv("LANGFUSE_SECRET_KEY");
-  requireEnv("LANGFUSE_HOST");
+  if (!dryRun) {
+    requireEnv("LANGFUSE_PUBLIC_KEY");
+    requireEnv("LANGFUSE_SECRET_KEY");
+    requireEnv("LANGFUSE_HOST");
+  }
 
-  const { LangfuseClient } = await import("@langfuse/client");
-  const langfuse = new LangfuseClient();
-
-  const personaSystem = await readFile(join(rootDir, "prompts/persona-system-prompt.md"), "utf8");
-  const feedbackSystem = await readFile(join(rootDir, "prompts/feedback-prompt.md"), "utf8");
+  const langfuse = dryRun
+    ? null
+    : new (await import("@langfuse/client")).LangfuseClient();
   const personas = JSON.parse(await readFile(join(rootDir, "data/personas.json"), "utf8"));
 
-  const staticPrompts = [
-    { name: "roleplay/persona-system", type: "text", prompt: personaSystem },
-    { name: "roleplay/feedback-system", type: "text", prompt: feedbackSystem }
-  ];
-
-  for (const item of staticPrompts) {
-    if (dryRun) {
-      console.log(`[dry-run] would create ${item.name} (${item.prompt.length} chars)`);
-      continue;
+  for (const item of MANAGED_PROMPTS) {
+    const prompt = await readFile(promptFilePath(rootDir, item.segments), "utf8");
+    for (const label of labels) {
+      if (dryRun) {
+        console.log(`[dry-run] would create ${item.name} label=${label} (${prompt.length} chars)`);
+        continue;
+      }
+      await langfuse.prompt.create({
+        name: item.name,
+        type: "text",
+        prompt,
+        labels: [label]
+      });
+      console.log(`created ${item.name} (${label})`);
     }
-    await langfuse.prompt.create({
-      name: item.name,
-      type: item.type,
-      prompt: item.prompt,
-      labels: ["production"]
-    });
-    console.log(`created ${item.name}`);
   }
 
   for (const persona of personas) {
@@ -67,30 +69,35 @@ async function main() {
       userMoves: [...new Set((rt.pasMap || []).map((p) => p.userMove))]
     };
     const name = `persona/${persona.id}/runtime-config`;
-    if (dryRun) {
-      console.log(`[dry-run] would create ${name}`);
-      continue;
+    for (const label of labels) {
+      if (dryRun) {
+        console.log(`[dry-run] would create ${name} label=${label}`);
+        continue;
+      }
+      await langfuse.prompt.create({
+        name,
+        type: "text",
+        prompt: [
+          `# ${persona.name} (${persona.id})`,
+          "",
+          "Langfuse 필터·실험용 메타. 대화 데이터는 data/personas.json.",
+          "",
+          "```json",
+          JSON.stringify(config, null, 2),
+          "```"
+        ].join("\n"),
+        labels: [label],
+        config
+      });
+      console.log(`created ${name} (${label})`);
     }
-    await langfuse.prompt.create({
-      name,
-      type: "text",
-      prompt: [
-        `# ${persona.name} (${persona.id})`,
-        "",
-        "이 프롬프트는 Langfuse 실험·필터용 메타데이터입니다.",
-        "실제 대화 조립은 server.js + data/personas.json이 담당합니다.",
-        "",
-        "```json",
-        JSON.stringify(config, null, 2),
-        "```"
-      ].join("\n"),
-      labels: ["production"],
-      config
-    });
-    console.log(`created ${name}`);
   }
 
-  console.log(dryRun ? "Dry run complete." : "Langfuse seed complete.");
+  console.log(
+    dryRun
+      ? "Dry run complete."
+      : `Langfuse seed complete. Labels: ${labels.join(", ")}. Set LANGFUSE_PROMPT_LABEL=staging to experiment in Render.`
+  );
 }
 
 main()

@@ -4,12 +4,16 @@
 
 ## 이 앱에서 프롬프트가 나뉘는 방식
 
-| 구분 | 어디서 고치나 | Langfuse |
-|------|----------------|----------|
-| 시스템 프롬프트 (역할·금지 규칙) | `roleplay/persona-system` | **UI에서 수정 → 배포 없이 반영** (약 60초 캐시) |
-| 피드백 코치 프롬프트 | `roleplay/feedback-system` | 동일 |
-| 가드레일·세션 조립 문구 | `server.js` | 아직 코드 (나중에 옮길 수 있음) |
-| 페르소나 6명 데이터·PAS | `data/personas.json` | trace 태그 `persona:kim-sihyun` 등으로 필터 |
+| 구분 | Langfuse 이름 | Git fallback |
+|------|----------------|--------------|
+| 페르소나 역할·구체 말하기 (5·6 기반) | `roleplay/persona-system` | `prompts/persona-system-prompt.md` |
+| **매 턴 대화 지침** (추상 말·정형 추임새 — **5·6**) | `roleplay/chat-dynamic` | `prompts/langfuse/chat-dynamic.md` |
+| 첫 턴 지침 | `roleplay/chat-initial` | `prompts/langfuse/chat-initial.md` |
+| PAS 턴 힌트 | `roleplay/pas-turn-hint` | `prompts/langfuse/pas-turn-hint.md` |
+| 피드백 코치 (7 기반) | `roleplay/feedback-system` | `prompts/feedback-prompt.md` |
+| **훈련 초점별 루브릭** (7) | `roleplay/feedback-rubric/{goal}` | `prompts/langfuse/feedback-rubric/*.md` |
+| 페르소나 데이터·PAS 매칭 | `data/personas.json` (코드) | trace `persona:*`, `goal:*` |
+| 세션·상태 요약 | `server.js` (런타임 변수) | `{{conversationPhase}}` 등으로 Langfuse에 주입 |
 
 **중요:** 김시현 말투·PAS 예시는 `personas.json`에 있습니다. Langfuse에서 고치는 건 주로 **공통 시스템 프롬프트**입니다. 페르소나별 문구 실험은 JSON 수정 + QA, 또는 Langfuse Dataset(다음 단계)입니다.
 
@@ -23,11 +27,14 @@
 npm run langfuse:seed
 ```
 
-생성되는 이름:
+생성되는 이름 (`lib/managed-prompts.js` 전체):
 
-- `roleplay/persona-system`
-- `roleplay/feedback-system`
-- `persona/{id}/runtime-config` (메타·필터용)
+- `roleplay/persona-system`, `roleplay/feedback-system`
+- `roleplay/chat-dynamic`, `roleplay/chat-initial`, `roleplay/pas-turn-hint` (**5·6번 — Langfuse UI에서 직접 수정**)
+- `roleplay/feedback-rubric/listen_and_understand` … `share_personal_witness` (**7번 — 초점별 루브릭**)
+- `persona/{id}/runtime-config` (필터용 메타)
+
+기본으로 `production` + `staging` 라벨이 모두 올라갑니다.
 
 ---
 
@@ -79,13 +86,15 @@ LANGFUSE_PROMPT_REFRESH_MS=60000
 
 이 프로젝트 QA 이슈 기준:
 
-| 증상 | 먼저 볼 곳 |
-|------|------------|
-| 역할 뒤집힘·코칭 말투 | `persona-system` — “내부 절차”, 금지 예시 |
-| PAS/라벨이 출력에 새음 | `persona-system` — 출력 금지 목록 |
-| 같은 질문 반복 | `server.js` 동적 블록 + `personas.json` badResponsePatterns |
-| 페르소나마다 반응이 비슷 | `personas.json` pasMap·example (페르소나별) |
-| 피드백이 너무 길거나 신학만 함 | `feedback-system` |
+| 증상 | 먼저 볼 Langfuse 프롬프트 |
+|------|-------------------------|
+| 추상적 말만 함·장벽 요약문 | `roleplay/chat-dynamic` — “이번 응답” 섹션 |
+| 정형 추임새·반복 질문 | `roleplay/chat-dynamic` + `roleplay/pas-turn-hint` |
+| 첫 말이 딱딱함 | `roleplay/chat-initial` |
+| 역할 뒤집힘·코칭 말투 | `roleplay/persona-system` |
+| PAS/라벨이 출력에 새음 | `roleplay/persona-system` |
+| 페르소나마다 반응이 비슷 | `personas.json` (배포 필요) |
+| 피드백이 복음만 들이밈 | `roleplay/feedback-rubric/{이번 goal}` + `feedback-system` |
 
 Playground에서 **동적 input 일부를 붙여 넣고** 테스트하면 (실제 `chatDynamicPromptFor` 출력 복사) 현실에 가깝습니다.
 

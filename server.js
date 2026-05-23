@@ -14,6 +14,7 @@ import {
   traceModelCall
 } from "./lib/langfuse-tracing.js";
 import { createPromptRegistry } from "./lib/langfuse-prompts.js";
+import { feedbackRubricPromptName } from "./lib/managed-prompts.js";
 
 const rootDir = fileURLToPath(new URL(".", import.meta.url));
 loadLocalEnv(join(rootDir, ".env"));
@@ -840,56 +841,10 @@ const goalGuidance = Object.fromEntries(
   Object.entries(goalPolicies).map(([goal, policy]) => [goal, `이 훈련 초점은 사용자가 연습할 목표다. ${formatGoalPolicy(policy)}`])
 );
 
-const feedbackGoalRubrics = {
-  listen_and_understand: {
-    primaryQuestion: "상대의 감정·고민·맥락을 정확히 듣고 되비추었는가.",
-    goodSignals: ["상대가 쓴 단어·상황을 구체적으로 되비춤", "조급한 해결·설교·조언으로 넘어가지 않음", "질문이 상대를 더 열게 함"],
-    fixSignals: ["상대 발화 무시하고 일반론·복음 설명", "감정 인정 없이 교리·조언", "질문 폭탄·심문"],
-    gospelScope: "이번 초점은 경청이다. 사용자가 복음 핵심을 다루지 않았어도 그것만으로 '가장 고칠 점'에 넣지 않는다."
-  },
-  ask_better_questions: {
-    primaryQuestion: "상대를 열게 하는 좋은 질문(열린·구체·비판 아님)을 했는가.",
-    goodSignals: ["상대의 말에서 한 가지를 짚는 질문", "부담 없는 호기심", "장벽을 더 구체화하는 질문"],
-    fixSignals: ["예/아니오 심문", "정답 유도·설교형 질문", "상대가 이미 말한 것을 반복 질문"],
-    gospelScope: "질문 품질이 핵심이다. 복음 6요소 미언급은 이 초점만으로 지적하지 않는다."
-  },
-  connect_to_faith: {
-    primaryQuestion: "삶의 고민에서 신앙 이야기로 자연스럽고 존중 있게 연결했는가.",
-    goodSignals: ["상대 고민과 연결된 전환", "억지 설교·강요 없음", "상대 속도에 맞춤"],
-    fixSignals: ["고민 무시하고 교회·믿음 강요", "추상적 신앙 말만", "상대 장벽 무시"],
-    gospelScope: "연결의 자연스러움과 적절한 신앙 언급을 본다. 아직 복음 전체를 설명하지 않았다고만 해서 감점하지 않는다."
-  },
-  explain_gospel_core: {
-    primaryQuestion: "이 상황에 필요한 복음 핵심(죄, 십자가, 부활, 은혜, 믿음 등)을 분명하고 이해 가능하게 말했는가.",
-    goodSignals: ["추상어보다 상대 맥락에 닿는 설명", "한 번에 하나씩", "질문에 정직히 응답"],
-    fixSignals: ["긴 설교·신학 용어만", "심리 위로·자기계발로 축소", "근거 없는 단정"],
-    gospelScope: "이 초점에서는 필요한 복음 요소 누락을 '가장 고칠 점'에 포함할 수 있다."
-  },
-  respond_to_barrier: {
-    primaryQuestion: "상대의 오해·저항·장벽에 차분하고 존중하며 답했는가.",
-    goodSignals: ["상대 말을 인정 후 분명히 답함", "반박·정죄 톤 없음", "남은 질문을 남김"],
-    fixSignals: ["장벽 무시·회피", "감정적 반박", "너무 빨리 수긍·해결"],
-    gospelScope: "장벽 응답이 핵심이다. 사용자가 연 관련 복음 요소만 평가하고, 무관한 교리 나열을 요구하지 않는다."
-  },
-  share_personal_witness: {
-    primaryQuestion: "짧고 진솔한 개인 경험·간증으로 상대와 연결했는가.",
-    goodSignals: ["구체적 한 장면", "겸손한 톤", "상대 고민과 닿는 부분"],
-    fixSignals: ["정답·설교처럼 들림", "과장·자랑", "상대 이야기 없이 나만 말함"],
-    gospelScope: "간증의 진솔함과 적절한 신앙 연결이 핵심이다. 전체 복음 설교를 요구하지 않는다."
-  }
-};
-
-function feedbackRubricBlockFor(session = {}) {
+async function feedbackRubricBlockFor(session = {}) {
   const goal = session.goal || "listen_and_understand";
-  const rubric = feedbackGoalRubrics[goal] || feedbackGoalRubrics.listen_and_understand;
-  return [
-    "훈련 초점 평가 루브릭 (1순위):",
-    `- 선택 초점: ${goalLabels[goal] || goal}`,
-    `- 주 평가 질문: ${rubric.primaryQuestion}`,
-    `- 잘한 신호: ${rubric.goodSignals.join(" / ")}`,
-    `- 고칠 신호: ${rubric.fixSignals.join(" / ")}`,
-    `- 복음 요소 평가 범위: ${rubric.gospelScope}`
-  ].join("\n");
+  const entry = await promptRegistry.get(feedbackRubricPromptName(goal));
+  return entry.text;
 }
 
 const guardrailPrompt = [
@@ -1974,18 +1929,21 @@ function formatPasEntry(entry, index) {
   ].join("\n");
 }
 
-function formatPasExecutionPlan(persona, messages = []) {
+function pasTurnHintVariables(persona, messages = []) {
   const detected = detectUserMove(lastUserMessage(messages) || {});
   const candidates = selectPasEntries(persona, detected, 1);
   const selected = candidates[0];
-  return [
-    "이번 턴 반응 힌트 (내부 참고, 출력 금지):",
-    `- 사용자 말의 뉘앙스: ${detected.userMove}`,
-    selected
-      ? `- 참고: ${selected.purpose || selected.action || "페르소나 카드의 interpretationRules와 말투 지문을 따른다."}`
-      : "- 참고: 페르소나 심층 카드와 interpretationRules를 따른다.",
-    "- PAS 예시 문장을 복사하지 말고, 이 사람의 구체 단어로 1~3문장만 말한다."
-  ].join("\n");
+  return {
+    userMove: detected.userMove,
+    pasReference: selected
+      ? selected.purpose || selected.action || "페르소나 카드의 interpretationRules와 말투 지문을 따른다."
+      : "페르소나 심층 카드와 interpretationRules를 따른다."
+  };
+}
+
+async function pasTurnHintFor(persona, messages = []) {
+  const entry = await promptRegistry.get("roleplay/pas-turn-hint", pasTurnHintVariables(persona, messages));
+  return entry;
 }
 
 function faithContextIsOpen(session = {}, messages = []) {
@@ -2289,7 +2247,7 @@ function buildSessionBlock(session, persona) {
   ].join("\n");
 }
 
-function buildFeedbackSessionBlock(session, persona) {
+async function buildFeedbackSessionBlock(session, persona) {
   const template = persona.roleplayTemplate || {};
   return [
     "세션 설정:",
@@ -2298,7 +2256,7 @@ function buildFeedbackSessionBlock(session, persona) {
     `- 시작 상황: ${settingLabels[session.setting] || session.setting}`,
     `- 훈련 초점: ${goalLabels[session.goal] || session.goal}`,
     "",
-    feedbackRubricBlockFor(session),
+    await feedbackRubricBlockFor(session),
     "",
     "페르소나 핵심 정보:",
     `- 배경: ${persona.background || "없음"}`,
@@ -2370,16 +2328,10 @@ function goalTurnPressureFor(session = {}, messages = [], persona = {}) {
     .join("\n");
 }
 
-function initialDynamicPromptFor(session, persona) {
-  return [
-    goalTurnPressureFor(session, [], persona),
-    "",
-    "첫 응답:",
-    "- 관계·상황·말투 지문을 반영한 짧은 구어체 1~3문장.",
-    "- 장소/시간 단서 하나, 망설임·부담·관심 중 하나를 자연스럽게.",
-    "- 훈련·목표·PAS·내부 라벨은 말하지 않는다.",
-    "- 사용자가 신앙을 먼저 꺼낸 설정이 아니면 복음/교회 설명을 먼저 시작하지 않는다."
-  ].join("\n");
+async function initialDynamicPromptFor(session, persona) {
+  return promptRegistry.get("roleplay/chat-initial", {
+    goalTurnPressure: goalTurnPressureFor(session, [], persona)
+  });
 }
 
 function conversationMemoryFor(messages = [], persona = {}) {
@@ -2426,55 +2378,45 @@ function formatConversationContext(messages = [], persona = {}) {
   ].join("\n");
 }
 
-function chatDynamicPromptFor(session, persona, messages) {
-  return [
-    conversationPhase(messages),
-    "",
-    conversationStateHints(messages, persona),
-    "",
-    goalTurnPressureFor(session, messages, persona),
-    `- 장면: ${settingContinuityHint(session, messages)}`,
-    `- 질문 반복: ${questionVarietyHint(messages)}`,
-    "",
-    formatPasExecutionPlan(persona, messages),
-    "",
-    "지금까지의 대화:",
-    formatConversationContext(messages, persona),
-    "",
-    "이번 응답:",
-    "- 마지막 사용자 말(감정·질문·새 정보)에 먼저 반응한다.",
-    "- 심층 카드의 interpretationRules·speechFingerprint·concreteWordBank로 **구체적 구어체** 1~3문장.",
-    "- 추상 장벽·신학 요약문·정형 추임새 반복 금지. PAS/지침 문장 출력 금지.",
-    "- 이미 답한 질문은 다시 묻지 않는다. 질문은 필요 시 하나만.",
-    "- 사용자가 아직 열지 않은 복음/교리는 페르소나가 먼저 꺼내지 않는다.",
-    "- 경청이면 조금 더 구체화, 압박이면 조심스럽게 선을 긋는다.",
-    "",
-    "페르소나의 실제 말만 출력하라."
-  ].join("\n");
+async function chatDynamicPromptFor(session, persona, messages) {
+  const pasEntry = await pasTurnHintFor(persona, messages);
+  return promptRegistry.get("roleplay/chat-dynamic", {
+    conversationPhase: conversationPhase(messages),
+    conversationStateHints: conversationStateHints(messages, persona),
+    goalTurnPressure: goalTurnPressureFor(session, messages, persona),
+    settingContinuity: settingContinuityHint(session, messages),
+    questionVariety: questionVarietyHint(messages),
+    pasTurnHint: pasEntry.text,
+    conversationContext: formatConversationContext(messages, persona)
+  });
 }
 
-function roleplayPromptPartsFor(session, persona, messages = [], { initial = false } = {}) {
+async function roleplayPromptPartsFor(session, persona, messages = [], { initial = false } = {}) {
   const staticPrompt = staticRoleplayPromptFor(session, persona);
-  const dynamicPrompt = initial ? initialDynamicPromptFor(session, persona) : chatDynamicPromptFor(session, persona, messages);
+  const dynamicEntry = initial
+    ? await initialDynamicPromptFor(session, persona)
+    : await chatDynamicPromptFor(session, persona, messages);
+  const dynamicPrompt = dynamicEntry.text;
   return {
     staticSystemBlocks: [staticPrompt],
     dynamicInput: dynamicPrompt,
+    dynamicPromptEntry: dynamicEntry,
     input: [staticPrompt, dynamicPrompt].join("\n\n")
   };
 }
 
-function initialPromptFor(session, persona) {
-  return roleplayPromptPartsFor(session, persona, [], { initial: true }).input;
+async function initialPromptFor(session, persona) {
+  return (await roleplayPromptPartsFor(session, persona, [], { initial: true })).input;
 }
 
-function chatPromptFor(session, persona, messages) {
-  return roleplayPromptPartsFor(session, persona, messages).input;
+async function chatPromptFor(session, persona, messages) {
+  return (await roleplayPromptPartsFor(session, persona, messages)).input;
 }
 
-function feedbackInputFor(session, persona, messages) {
+async function feedbackInputFor(session, persona, messages) {
   return [
     "세션 정보:",
-    buildFeedbackSessionBlock(session, persona),
+    await buildFeedbackSessionBlock(session, persona),
     "",
     "전체 대화 기록:",
     formatMessages(messages),
@@ -2601,9 +2543,9 @@ function hasFaithTerms(text = "") {
   return /하나님|예수|복음|죄|십자가|부활|믿음|교회|구원|신앙/.test(String(text || ""));
 }
 
-function openingLineInputFor(session, persona, caseItem) {
+async function openingLineInputFor(session, persona, caseItem) {
   return [
-    initialPromptFor(session, persona),
+    await initialPromptFor(session, persona),
     "",
     "관리자 첫 시작 문장 생성 작업:",
     "- 전체 대화 응답이 아니라 사용자가 처음 보게 되는 첫 시작 문장 1개만 출력한다.",
@@ -3592,7 +3534,8 @@ async function handleApi(req, res, url) {
     if (path === "/api/start") {
       const sessionWithScene = { ...session, visibleScene: visibleSceneFor(session, persona) };
       const systemPrompt = await personaSystemPrompt();
-      const prompt = roleplayPromptPartsFor(sessionWithScene, persona, [], { initial: true });
+      const prompt = await roleplayPromptPartsFor(sessionWithScene, persona, [], { initial: true });
+      const dynamicPrompt = prompt.dynamicPromptEntry;
       const { text, usage, model, provider } = await callModelWithUsage({
         modelType: "chat",
         instructions: systemPrompt.text,
@@ -3610,6 +3553,9 @@ async function handleApi(req, res, url) {
           langfusePrompt: systemPrompt.langfusePrompt,
           promptSource: systemPrompt.source,
           promptVersion: systemPrompt.version,
+          dynamicPromptName: dynamicPrompt?.name,
+          dynamicPromptSource: dynamicPrompt?.source,
+          dynamicPromptVersion: dynamicPrompt?.version,
           prompt: { ...prompt, instructions: systemPrompt.text }
         })
       });
@@ -3677,11 +3623,14 @@ async function handleApi(req, res, url) {
       }
       const promptMessages = [...serverMessages, nextUserMessage];
       if (promptMessages.filter((message) => message.role === "user").length > CHAT_USER_TURN_LIMIT) {
-        json(res, 400, { error: "한 번의 훈련에서는 최대 30턴까지 대화할 수 있습니다. 피드백을 받고 새 훈련을 시작해주세요." });
+        json(res, 400, {
+          error: `한 번의 훈련에서는 최대 ${CHAT_USER_TURN_LIMIT}턴까지 대화할 수 있습니다. 피드백을 받고 새 훈련을 시작해주세요.`
+        });
         return;
       }
       const systemPrompt = await personaSystemPrompt();
-      const prompt = roleplayPromptPartsFor(session, persona, promptMessages);
+      const prompt = await roleplayPromptPartsFor(session, persona, promptMessages);
+      const dynamicPrompt = prompt.dynamicPromptEntry;
       const { text, usage, model, provider } = await callModelWithUsage({
         modelType: "chat",
         instructions: systemPrompt.text,
@@ -3700,6 +3649,9 @@ async function handleApi(req, res, url) {
           langfusePrompt: systemPrompt.langfusePrompt,
           promptSource: systemPrompt.source,
           promptVersion: systemPrompt.version,
+          dynamicPromptName: dynamicPrompt?.name,
+          dynamicPromptSource: dynamicPrompt?.source,
+          dynamicPromptVersion: dynamicPrompt?.version,
           prompt: { ...prompt, instructions: systemPrompt.text }
         })
       });
@@ -3761,8 +3713,9 @@ async function handleApi(req, res, url) {
       conversation.messages = feedbackMessages;
       conversation.updatedAt = new Date().toISOString();
       await saveDb();
-      const input = feedbackInputFor(session, persona, feedbackMessages);
+      const input = await feedbackInputFor(session, persona, feedbackMessages);
       const feedbackPromptEntry = await feedbackSystemPrompt();
+      const rubricEntry = await promptRegistry.get(feedbackRubricPromptName(session.goal || "listen_and_understand"));
       let text = "";
       let usage = {};
       let model = "";
@@ -3785,6 +3738,9 @@ async function handleApi(req, res, url) {
               langfusePrompt: feedbackPromptEntry.langfusePrompt,
               promptSource: feedbackPromptEntry.source,
               promptVersion: feedbackPromptEntry.version,
+              rubricPromptName: rubricEntry.name,
+              rubricPromptSource: rubricEntry.source,
+              rubricPromptVersion: rubricEntry.version,
               prompt: { dynamicInput: input, instructions: feedbackPromptEntry.text }
             })
           });
@@ -3807,6 +3763,9 @@ async function handleApi(req, res, url) {
               langfusePrompt: feedbackPromptEntry.langfusePrompt,
               promptSource: feedbackPromptEntry.source,
               promptVersion: feedbackPromptEntry.version,
+              rubricPromptName: rubricEntry.name,
+              rubricPromptSource: rubricEntry.source,
+              rubricPromptVersion: rubricEntry.version,
               prompt: { dynamicInput: input, instructions: feedbackPromptEntry.text }
             })
           });
