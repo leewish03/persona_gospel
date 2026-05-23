@@ -15,6 +15,7 @@ import {
 } from "./lib/langfuse-tracing.js";
 import { createPromptRegistry } from "./lib/langfuse-prompts.js";
 import { feedbackRubricPromptName } from "./lib/managed-prompts.js";
+import { runLangfuseSeed } from "./lib/langfuse-seed-runner.js";
 
 const rootDir = fileURLToPath(new URL(".", import.meta.url));
 loadLocalEnv(join(rootDir, ".env"));
@@ -3501,6 +3502,54 @@ async function handleAppApi(req, res, url) {
     if (!user) return true;
     promptRegistry.clear();
     json(res, 200, await promptRegistry.status());
+    return true;
+  }
+
+  if (path === "/api/admin/langfuse-prompts/seed" && req.method === "POST") {
+    const user = requireAdmin(req, res);
+    if (!user) return true;
+    try {
+      const body = (await readJson(req)) || {};
+      const labels = Array.isArray(body.labels) && body.labels.length ? body.labels : ["production", "staging"];
+      const result = await runLangfuseSeed({ rootDir, labels, dryRun: false });
+      promptRegistry.clear();
+      json(res, 200, {
+        ok: true,
+        message: `Langfuse에 ${result.count}개 프롬프트 버전을 올렸습니다.`,
+        labels: result.labels,
+        created: result.created
+      });
+    } catch (error) {
+      console.error("[langfuse] admin seed failed:", error);
+      json(res, 502, { error: error?.message || "Langfuse seed failed." });
+    }
+    return true;
+  }
+
+  if (path === "/api/internal/langfuse-seed" && req.method === "POST") {
+    const seedToken = process.env.LANGFUSE_SEED_TOKEN || "";
+    const auth = req.headers.authorization || "";
+    const bearer = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+    const headerToken = req.headers["x-langfuse-seed-token"] || "";
+    if (!seedToken || (bearer !== seedToken && headerToken !== seedToken)) {
+      json(res, 401, { error: "Unauthorized" });
+      return true;
+    }
+    try {
+      const body = (await readJson(req)) || {};
+      const labels = Array.isArray(body.labels) && body.labels.length ? body.labels : ["production", "staging"];
+      const result = await runLangfuseSeed({ rootDir, labels, dryRun: false });
+      promptRegistry.clear();
+      json(res, 200, {
+        ok: true,
+        message: `Langfuse에 ${result.count}개 프롬프트 버전을 올렸습니다.`,
+        labels: result.labels,
+        created: result.created
+      });
+    } catch (error) {
+      console.error("[langfuse] internal seed failed:", error);
+      json(res, 502, { error: error?.message || "Langfuse seed failed." });
+    }
     return true;
   }
 

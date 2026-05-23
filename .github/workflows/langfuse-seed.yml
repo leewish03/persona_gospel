@@ -1,0 +1,26 @@
+name: Langfuse seed prompts
+
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: "Comma-separated labels (default production,staging)"
+        required: false
+        default: "production,staging"
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - name: Upload prompts to Langfuse
+        env:
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_HOST: ${{ secrets.LANGFUSE_HOST }}
+        run: npm run langfuse:seed

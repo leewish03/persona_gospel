@@ -61,3 +61,5 @@ services:
         value: "60000"
       - key: LANGFUSE_TRACING_ENABLED
         value: "true"
+      - key: LANGFUSE_SEED_TOKEN
+        sync: false
