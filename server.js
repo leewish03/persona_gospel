@@ -769,6 +769,8 @@ const settingGuidance = {
   faith_topic_arose: "사용자와 페르소나 사이에서 신앙이나 교회 이야기가 자연스럽게 언급된 직후다. 첫 응답에는 페르소나가 그 주제에 대해 느끼는 궁금함, 부담감, 망설임, 과거 경험 중 하나가 자연스럽게 들어가야 한다. 페르소나는 바로 신앙을 받아들이지 않는다."
 };
 
+const CHAT_USER_TURN_LIMIT = 500;
+
 const goalLabels = {
   listen_and_understand: "상대의 말 듣고 이해하기",
   ask_better_questions: "좋은 질문으로 대화 열기",
@@ -3628,8 +3630,10 @@ async function handleApi(req, res, url) {
         return;
       }
       const promptMessages = [...serverMessages, nextUserMessage];
-      if (promptMessages.filter((message) => message.role === "user").length > 30) {
-        json(res, 400, { error: "한 번의 훈련에서는 최대 30턴까지 대화할 수 있습니다. 피드백을 받고 새 훈련을 시작해주세요." });
+      if (promptMessages.filter((message) => message.role === "user").length > CHAT_USER_TURN_LIMIT) {
+        json(res, 400, {
+          error: `한 번의 훈련에서는 최대 ${CHAT_USER_TURN_LIMIT}턴까지 대화할 수 있습니다. 피드백을 받고 새 훈련을 시작해주세요.`
+        });
         return;
       }
       const systemPrompt = await personaSystemPrompt();
