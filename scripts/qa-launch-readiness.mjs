@@ -1,6 +1,15 @@
 #!/usr/bin/env node
-const base = (process.env.QA_BASE_URL || process.env.SMOKE_URL || "http://127.0.0.1:4173").replace(/\/+$/, "");
+import { spawn } from "node:child_process";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const shouldStartServer = !process.env.QA_BASE_URL && !process.env.SMOKE_URL;
+const isRemoteTarget = !shouldStartServer;
+const base = (process.env.QA_BASE_URL || process.env.SMOKE_URL || `http://127.0.0.1:${process.env.QA_PORT || 4173}`).replace(/\/+$/, "");
 const jar = new Map();
+let serverProcess = null;
+let serverOutput = "";
 
 function storeCookies(response) {
   const raw = response.headers.get("set-cookie");
@@ -38,7 +47,49 @@ async function expectOk(path, options) {
   return response;
 }
 
+async function waitForServer() {
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`${base}/healthz`);
+      if (response.ok) return;
+    } catch {
+      // Retry until the local server is ready.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 350));
+  }
+  throw new Error(`local server did not become ready at ${base}\n${serverOutput.slice(-2000)}`);
+}
+
+async function startLocalServer() {
+  const url = new URL(base);
+  const storageDir = await mkdtemp(join(tmpdir(), "gospel-launch-qa-"));
+  serverProcess = spawn(process.execPath, ["server.js"], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      NODE_ENV: "development",
+      PORT: url.port || "4173",
+      HOST: "127.0.0.1",
+      ENABLE_DEV_LOGIN: "true",
+      STORAGE_DIR: storageDir,
+      ALLOW_INSECURE_MEMORY_SESSIONS: "true",
+      SUPABASE_URL: "",
+      SUPABASE_SERVICE_ROLE_KEY: ""
+    },
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  serverProcess.stdout.on("data", (chunk) => {
+    serverOutput += chunk.toString();
+  });
+  serverProcess.stderr.on("data", (chunk) => {
+    serverOutput += chunk.toString();
+  });
+  await waitForServer();
+}
+
 async function main() {
+  if (shouldStartServer) await startLocalServer();
   await expectOk("/healthz");
   await expectOk("/manifest.webmanifest");
   await expectOk("/sw.js");
@@ -52,11 +103,19 @@ async function main() {
   if (!meBody.csrfToken && !jar.get("csrf")) throw new Error("/api/me did not issue a CSRF token");
 
   const loginEmail = `qa-launch-${Date.now()}@example.local`;
-  await expectOk("/api/dev-login", {
+  const loginResponse = await request("/api/dev-login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email: loginEmail, displayName: "QA Launch" })
   });
+  if (!loginResponse.ok) {
+    if (isRemoteTarget && loginResponse.status === 404) {
+      console.log("OK public launch QA; authenticated checks skipped because dev login is disabled", base);
+      return;
+    }
+    const body = await loginResponse.text().catch(() => "");
+    throw new Error(`/api/dev-login failed: ${loginResponse.status} ${body.slice(0, 300)}`);
+  }
   await expectOk("/api/profile", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -89,4 +148,6 @@ main().catch((error) => {
   }
   console.error(error);
   process.exit(1);
+}).finally(() => {
+  if (serverProcess) serverProcess.kill("SIGTERM");
 });

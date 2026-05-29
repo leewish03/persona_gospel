@@ -114,14 +114,15 @@ Kakao:  http://localhost:4173/auth/kakao/callback
 2. GitHub 저장소를 연결한다.
 3. Node.js 앱으로 배포한다.
 4. 환경변수를 입력한다.
-5. persistent disk를 `/app/storage` 또는 호스팅 서비스가 지정한 경로에 연결한다.
+5. Supabase를 기본 저장소로 사용한다. JSON fallback을 운영 백업으로 쓸 경우에만 persistent disk를 `/var/data` 같은 고정 경로에 연결하고 `STORAGE_DIR`을 맞춘다.
 6. 배포 URL을 확인한다.
 7. `APP_BASE_URL`을 실제 배포 URL로 바꾼다.
 8. Google/Kakao OAuth callback URL을 등록한다.
 9. Supabase 사용 시 `docs/launch-readiness-migration.sql`을 먼저 적용한다.
 10. 로그인, 프로필 저장, 대화 시작, 피드백 저장, 기록 조회를 테스트한다.
-11. `npm run qa:launch` 또는 배포 URL 기준 `QA_BASE_URL=https://서비스도메인 npm run qa:launch`로 계정 삭제, 데이터 내보내기, CSRF, PWA 정적 파일을 확인한다.
-12. 도메인을 연결한다.
+11. 로컬에서는 `npm run qa:launch`로 계정 삭제, 데이터 내보내기, CSRF, PWA 정적 파일을 확인한다.
+12. 운영 Render에서는 `SMOKE_URL=https://서비스도메인 npm run smoke`와 `QA_BASE_URL=https://서비스도메인 npm run qa:launch`로 공개 정적/헬스 체크를 확인한다. 운영은 `ENABLE_DEV_LOGIN=false`이므로 인증 이후 흐름은 Google/Kakao 테스트 계정으로 수동 확인한다.
+13. 도메인을 연결한다.
 
 ## 내가 할 수 있는 작업
 

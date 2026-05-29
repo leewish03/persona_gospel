@@ -9,6 +9,7 @@
     "check": "node --check server.js && vite build",
     "smoke": "node scripts/smoke-api.mjs",
     "qa:launch": "node scripts/qa-launch-readiness.mjs",
+    "qa:launch:local": "node scripts/qa-launch-readiness.mjs",
     "qa:walkthrough": "node scripts/qa-full-walkthrough.mjs",
     "qa:claude-personas": "node scripts/qa-claude-personas.mjs",
     "langfuse:seed": "node scripts/langfuse-seed-prompts.mjs",

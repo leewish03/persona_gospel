@@ -11,6 +11,8 @@ services:
         value: production
       - key: ENABLE_DEV_LOGIN
         value: "false"
+      - key: STORAGE_DIR
+        value: /var/data
       - key: OPENAI_CHAT_MODEL
         value: gpt-5.4-mini
       - key: OPENAI_CHAT_REASONING_EFFORT
