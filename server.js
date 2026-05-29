@@ -685,7 +685,8 @@ function supabaseAppFeedbackToApp(row) {
     adminNote: row.admin_note || "",
     resolvedAt: row.resolved_at || "",
     userAgent: row.user_agent || "",
-    createdAt: row.created_at
+    createdAt: row.created_at,
+    updatedAt: row.updated_at || ""
   };
 }
 
@@ -700,6 +701,7 @@ function appFeedbackToSupabase(feedback) {
     priority: feedback.priority || "normal",
     admin_note: feedback.adminNote || "",
     resolved_at: feedback.resolvedAt || null,
+    updated_at: feedback.updatedAt || feedback.createdAt || null,
     user_agent: feedback.userAgent || "",
     created_at: feedback.createdAt
   };
@@ -3488,7 +3490,7 @@ async function handleAppApi(req, res, url) {
     };
     db.appFeedbacks = [feedback, ...(db.appFeedbacks || [])].slice(0, 1000);
     await saveDb();
-    json(res, 201, { feedback: publicAppFeedback(feedback) });
+    json(res, 201, { feedback: publicAppFeedback(feedback), limits: publicUsageLimits(user) });
     return true;
   }
 
@@ -3922,7 +3924,7 @@ async function handleApi(req, res, url) {
         usage
       });
       await saveDb();
-      json(res, 200, { text, conversationId: conversation.id, visibleScene: sessionWithScene.visibleScene });
+      json(res, 200, { text, conversationId: conversation.id, visibleScene: sessionWithScene.visibleScene, limits: publicUsageLimits(user) });
       return;
     }
 
@@ -4012,7 +4014,7 @@ async function handleApi(req, res, url) {
         usage
       });
       await saveDb();
-      json(res, 200, { text });
+      json(res, 200, { text, limits: publicUsageLimits(user) });
       return;
     }
 
@@ -4032,7 +4034,7 @@ async function handleApi(req, res, url) {
         return;
       }
       if (conversation?.status === "finished" && conversation.feedbackText) {
-        json(res, 200, { text: conversation.feedbackText, alreadyFinished: true });
+        json(res, 200, { text: conversation.feedbackText, alreadyFinished: true, limits: publicUsageLimits(user) });
         return;
       }
       const clientFeedbackMessages = sanitizeConversationMessages(body.messages);
@@ -4142,7 +4144,7 @@ async function handleApi(req, res, url) {
         usage
       });
       await saveDb();
-      json(res, 200, { text });
+      json(res, 200, { text, limits: publicUsageLimits(user) });
       return;
     }
 

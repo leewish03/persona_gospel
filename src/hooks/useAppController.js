@@ -604,6 +604,7 @@ export function useAppController() {
     setIsBusy(true);
     try {
       const data = await postJson("/api/start", { session });
+      if (data.limits) setAuth((value) => ({ ...value, limits: data.limits }));
       setConversationId(data.conversationId || "");
       if (data.visibleScene) setActiveSession({ ...session, visibleScene: data.visibleScene });
       setMessages([{ role: "assistant", content: data.text }]);
@@ -633,6 +634,7 @@ export function useAppController() {
         session: currentSession,
         messages: nextMessages.filter((message) => message.role !== "system")
       });
+      if (data.limits) setAuth((value) => ({ ...value, limits: data.limits }));
       setMessages([...nextMessages, { role: "assistant", content: data.text }]);
       setWaitingForAssistant(false);
     } catch (error) {
@@ -672,6 +674,7 @@ export function useAppController() {
         session: currentSession,
         messages: messages.filter((message) => message.role !== "system")
       });
+      if (data.limits) setAuth((value) => ({ ...value, limits: data.limits }));
       setLatestFeedbackText(data.text);
       setFeedbackError("");
       setSessionStarted(false);
@@ -803,7 +806,8 @@ export function useAppController() {
     setIsBusy(true);
     setAppFeedbackNotice("");
     try {
-      await postJson("/api/app-feedback", { message, category: appFeedbackCategory, page: currentScreen });
+      const data = await postJson("/api/app-feedback", { message, category: appFeedbackCategory, page: currentScreen });
+      if (data.limits) setAuth((value) => ({ ...value, limits: data.limits }));
       setAppFeedbackForm("");
       setAppFeedbackCategory("general");
       setAppFeedbackNotice("피드백을 보냈습니다. 개선에 참고하겠습니다.");

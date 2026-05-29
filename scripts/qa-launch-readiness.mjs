@@ -1,15 +1,30 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { mkdtemp } from "node:fs/promises";
+import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const shouldStartServer = !process.env.QA_BASE_URL && !process.env.SMOKE_URL;
 const isRemoteTarget = !shouldStartServer;
-const base = (process.env.QA_BASE_URL || process.env.SMOKE_URL || `http://127.0.0.1:${process.env.QA_PORT || 4173}`).replace(/\/+$/, "");
+const qaPort = process.env.QA_PORT || (shouldStartServer ? await freePort() : 4173);
+const base = (process.env.QA_BASE_URL || process.env.SMOKE_URL || `http://127.0.0.1:${qaPort}`).replace(/\/+$/, "");
 const jar = new Map();
 let serverProcess = null;
 let serverOutput = "";
+let serverExited = false;
+
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const server = createNetServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      server.close(() => resolve(port || 4173));
+    });
+  });
+}
 
 function storeCookies(response) {
   const raw = response.headers.get("set-cookie");
@@ -50,6 +65,7 @@ async function expectOk(path, options) {
 async function waitForServer() {
   const deadline = Date.now() + 15000;
   while (Date.now() < deadline) {
+    if (serverExited) throw new Error(`local server exited before readiness\n${serverOutput.slice(-2000)}`);
     try {
       const response = await fetch(`${base}/healthz`);
       if (response.ok) return;
@@ -84,6 +100,9 @@ async function startLocalServer() {
   });
   serverProcess.stderr.on("data", (chunk) => {
     serverOutput += chunk.toString();
+  });
+  serverProcess.once("exit", () => {
+    serverExited = true;
   });
   await waitForServer();
 }

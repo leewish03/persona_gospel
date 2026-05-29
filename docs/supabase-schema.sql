@@ -8,6 +8,7 @@ create table if not exists public.app_users (
   role text not null default 'user',
   profile jsonb not null default '{}'::jsonb,
   disabled_at timestamptz,
+  deleted_at timestamptz,
   last_login_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -47,6 +48,7 @@ create table if not exists public.usage_events (
   user_id uuid references public.app_users(id) on delete set null,
   conversation_id uuid references public.conversations(id) on delete set null,
   event_type text not null,
+  provider text not null default 'openai',
   model text,
   input_tokens integer not null default 0,
   output_tokens integer not null default 0,
@@ -77,16 +79,24 @@ create table if not exists public.app_feedbacks (
   user_id uuid references public.app_users(id) on delete set null,
   message text not null,
   page text not null default '',
+  category text not null default 'general',
+  status text not null default 'new',
+  priority text not null default 'normal',
+  admin_note text not null default '',
+  resolved_at timestamptz,
   user_agent text not null default '',
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  updated_at timestamptz
 );
 
+create index if not exists idx_app_users_deleted_at on public.app_users(deleted_at);
 create index if not exists idx_conversations_user_created on public.conversations(user_id, created_at desc);
 create index if not exists idx_conversations_status on public.conversations(status);
 create index if not exists idx_conversations_hidden_by_user_at on public.conversations(hidden_by_user_at);
 create index if not exists idx_messages_conversation_order on public.conversation_messages(conversation_id, sort_order);
 create index if not exists idx_usage_events_created on public.usage_events(created_at desc);
 create index if not exists idx_usage_events_user_created on public.usage_events(user_id, created_at desc);
+create index if not exists idx_usage_events_user_day on public.usage_events(user_id, created_at desc);
 create index if not exists idx_usage_events_conversation on public.usage_events(conversation_id);
 create index if not exists idx_app_logs_created_at on public.app_logs(created_at desc);
 create index if not exists idx_app_logs_event_type on public.app_logs(event_type);
@@ -94,6 +104,12 @@ create index if not exists idx_app_logs_user_id on public.app_logs(user_id);
 create index if not exists idx_app_logs_conversation_id on public.app_logs(conversation_id);
 create index if not exists idx_app_feedbacks_created_at on public.app_feedbacks(created_at desc);
 create index if not exists idx_app_feedbacks_user_id on public.app_feedbacks(user_id);
+create index if not exists idx_app_feedbacks_status_created on public.app_feedbacks(status, created_at desc);
 
+alter table public.app_users enable row level security;
+alter table public.conversations enable row level security;
+alter table public.conversation_messages enable row level security;
+alter table public.usage_events enable row level security;
+alter table public.app_settings enable row level security;
 alter table public.app_logs enable row level security;
 alter table public.app_feedbacks enable row level security;
