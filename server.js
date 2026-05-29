@@ -53,6 +53,10 @@ const exchangeRateApiUrl =
   globalThis.process?.env?.EXCHANGE_RATE_API_URL || "https://api.frankfurter.dev/v1/latest?base=USD&symbols=KRW";
 const exchangeRateRefreshMs = Number(globalThis.process?.env?.EXCHANGE_RATE_REFRESH_MS || 6 * 60 * 60 * 1000);
 const exchangeRateTimeoutMs = Number(globalThis.process?.env?.EXCHANGE_RATE_TIMEOUT_MS || 4000);
+const maxJsonBodyBytes = Number(globalThis.process?.env?.MAX_JSON_BODY_BYTES || 256 * 1024);
+const rateLimitWindowMs = Number(globalThis.process?.env?.RATE_LIMIT_WINDOW_MS || 60 * 1000);
+const rateLimitMutationsPerWindow = Number(globalThis.process?.env?.RATE_LIMIT_MUTATIONS_PER_WINDOW || 80);
+const csrfCookieName = "csrf";
 const chatInputPrice = Number(globalThis.process?.env?.OPENAI_CHAT_INPUT_USD_PER_1M || 0.75);
 const chatOutputPrice = Number(globalThis.process?.env?.OPENAI_CHAT_OUTPUT_USD_PER_1M || 4.5);
 const feedbackInputPrice = Number(globalThis.process?.env?.OPENAI_FEEDBACK_INPUT_USD_PER_1M || 2.5);
@@ -73,6 +77,7 @@ const anthropicFeedbackHaikuOutput = Number(globalThis.process?.env?.ANTHROPIC_F
 const sessions = new Map();
 const oauthStates = new Map();
 const openingLineJobs = new Map();
+const rateLimitBuckets = new Map();
 let exchangeRateState = {
   usdToKrw,
   source: "fallback",
@@ -81,6 +86,10 @@ let exchangeRateState = {
   date: "",
   error: ""
 };
+
+if (isProduction && !sessionSecret && globalThis.process?.env?.ALLOW_INSECURE_MEMORY_SESSIONS !== "true") {
+  throw new Error("SESSION_SECRET is required in production. Set ALLOW_INSECURE_MEMORY_SESSIONS=true only for temporary testing.");
+}
 
 function loadLocalEnv(path) {
   if (globalThis.process?.env?.NODE_ENV === "production" || !existsSync(path)) return;
@@ -103,6 +112,7 @@ const MIME_TYPES = {
   ".css": "text/css; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
+  ".webmanifest": "application/manifest+json; charset=utf-8",
   ".png": "image/png",
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
@@ -138,6 +148,13 @@ const defaultSettings = {
   cost: {
     usdToKrw,
     monthlyBudgetKrw: 0
+  },
+  limits: {
+    dailyStarts: Number(globalThis.process?.env?.DAILY_USER_START_LIMIT || 30),
+    dailyChatMessages: Number(globalThis.process?.env?.DAILY_USER_CHAT_LIMIT || 300),
+    dailyFeedbacks: Number(globalThis.process?.env?.DAILY_USER_FEEDBACK_LIMIT || 20),
+    dailyAppFeedbacks: Number(globalThis.process?.env?.DAILY_USER_APP_FEEDBACK_LIMIT || 10),
+    monthlyGlobalBudgetKrw: Number(globalThis.process?.env?.MONTHLY_GLOBAL_BUDGET_KRW || 0)
   },
   openingLines: {
     latest: null
@@ -229,6 +246,7 @@ function mergeSettings(base, incoming) {
   return {
     donation: { ...(base.donation || {}), ...(incoming.donation || {}) },
     cost: { ...(base.cost || {}), ...(incoming.cost || {}) },
+    limits: { ...(base.limits || {}), ...(incoming.limits || {}) },
     openingLines: { ...(base.openingLines || {}), ...(incoming.openingLines || {}) },
     ai: mergeAiSettings(base.ai || {}, incoming.ai || {})
   };
@@ -301,6 +319,13 @@ function sanitizeSettings(input = {}) {
         fetchedAt: String(exchangeRate.fetchedAt || ""),
         error: String(exchangeRate.error || "")
       }
+    },
+    limits: {
+      dailyStarts: cleanOptionalNumber(merged.limits.dailyStarts, { min: 0, max: 10000 }) || 0,
+      dailyChatMessages: cleanOptionalNumber(merged.limits.dailyChatMessages, { min: 0, max: 100000 }) || 0,
+      dailyFeedbacks: cleanOptionalNumber(merged.limits.dailyFeedbacks, { min: 0, max: 10000 }) || 0,
+      dailyAppFeedbacks: cleanOptionalNumber(merged.limits.dailyAppFeedbacks, { min: 0, max: 10000 }) || 0,
+      monthlyGlobalBudgetKrw: cleanOptionalNumber(merged.limits.monthlyGlobalBudgetKrw, { min: 0, max: 100000000 }) || 0
     },
     ai: {
       chat: sanitizeModelSettings(merged.ai.chat, defaultSettings.ai.chat),
@@ -549,6 +574,7 @@ function supabaseUserToApp(row) {
     role: row.role || "user",
     profile: row.profile || {},
     disabledAt: row.disabled_at || "",
+    deletedAt: row.deleted_at || "",
     lastLoginAt: row.last_login_at || "",
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -566,6 +592,7 @@ function appUserToSupabase(user) {
     role: user.role || "user",
     profile: user.profile || {},
     disabled_at: user.disabledAt || null,
+    deleted_at: user.deletedAt || null,
     last_login_at: user.lastLoginAt || null,
     created_at: user.createdAt,
     updated_at: user.updatedAt
@@ -620,6 +647,7 @@ function supabaseUsageToApp(row) {
     userId: row.user_id || "",
     conversationId: row.conversation_id || "",
     eventType: row.event_type,
+    provider: row.provider || "openai",
     model: row.model || "",
     inputTokens: Number(row.input_tokens || 0),
     outputTokens: Number(row.output_tokens || 0),
@@ -635,6 +663,7 @@ function appUsageToSupabase(event) {
     user_id: event.userId || null,
     conversation_id: event.conversationId || null,
     event_type: event.eventType,
+    provider: event.provider || "openai",
     model: event.model || "",
     input_tokens: event.inputTokens || 0,
     output_tokens: event.outputTokens || 0,
@@ -650,6 +679,11 @@ function supabaseAppFeedbackToApp(row) {
     userId: row.user_id || "",
     message: row.message || "",
     page: row.page || "",
+    category: row.category || "general",
+    status: row.status || "new",
+    priority: row.priority || "normal",
+    adminNote: row.admin_note || "",
+    resolvedAt: row.resolved_at || "",
     userAgent: row.user_agent || "",
     createdAt: row.created_at
   };
@@ -661,6 +695,11 @@ function appFeedbackToSupabase(feedback) {
     user_id: feedback.userId || null,
     message: feedback.message || "",
     page: feedback.page || "",
+    category: feedback.category || "general",
+    status: feedback.status || "new",
+    priority: feedback.priority || "normal",
+    admin_note: feedback.adminNote || "",
+    resolved_at: feedback.resolvedAt || null,
     user_agent: feedback.userAgent || "",
     created_at: feedback.createdAt
   };
@@ -848,8 +887,36 @@ const guardrailPrompt = [
   "- 목적 이탈, 앱/AI/프롬프트 질문, 연애/성적 흐름은 짧게 선을 긋고 현재 대화로 돌아온다."
 ].join("\n");
 
+function securityHeaders({ html = false } = {}) {
+  const headers = {
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "X-Frame-Options": "DENY",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()"
+  };
+  if (isProduction) {
+    headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains";
+  }
+  if (html) {
+    headers["Content-Security-Policy"] = [
+      "default-src 'self'",
+      "script-src 'self'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: https:",
+      "connect-src 'self'",
+      "font-src 'self' data:",
+      "object-src 'none'",
+      "base-uri 'self'",
+      "frame-ancestors 'none'",
+      "form-action 'self' https://accounts.google.com https://kauth.kakao.com"
+    ].join("; ");
+  }
+  return headers;
+}
+
 function json(res, status, payload) {
   res.writeHead(status, {
+    ...securityHeaders(),
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store"
   });
@@ -857,7 +924,7 @@ function json(res, status, payload) {
 }
 
 function redirect(res, location) {
-  res.writeHead(302, { Location: location });
+  res.writeHead(302, { ...securityHeaders(), Location: location });
   res.end();
 }
 
@@ -901,6 +968,36 @@ function setSessionCookie(res, sid) {
 
 function clearSessionCookie(res) {
   res.setHeader("Set-Cookie", "sid=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0");
+}
+
+function appendSetCookie(res, cookie) {
+  const current = res.getHeader?.("Set-Cookie");
+  if (!current) {
+    res.setHeader("Set-Cookie", cookie);
+    return;
+  }
+  res.setHeader("Set-Cookie", Array.isArray(current) ? [...current, cookie] : [current, cookie]);
+}
+
+function ensureCsrfCookie(req, res) {
+  const cookies = parseCookies(req);
+  const token = cookies[csrfCookieName] || randomUUID();
+  if (!cookies[csrfCookieName]) {
+    const secure = isProduction ? "; Secure" : "";
+    appendSetCookie(res, `${csrfCookieName}=${encodeURIComponent(token)}; Path=/; SameSite=Lax; Max-Age=${60 * 60 * 24 * 30}${secure}`);
+  }
+  return token;
+}
+
+function clearCsrfCookie(res) {
+  appendSetCookie(res, `${csrfCookieName}=; Path=/; SameSite=Lax; Max-Age=0`);
+}
+
+function csrfTokenValid(req) {
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(req.method || "")) return true;
+  const cookieToken = parseCookies(req)[csrfCookieName] || "";
+  const headerToken = String(req.headers["x-csrf-token"] || "");
+  return Boolean(cookieToken && headerToken && safeEqual(cookieToken, headerToken));
 }
 
 function signSessionPayload(payload) {
@@ -948,6 +1045,8 @@ function publicUser(user) {
     role: user.role || "user",
     profile,
     profileComplete: isProfileComplete(profile),
+    disabledAt: user.disabledAt || "",
+    deletedAt: user.deletedAt || "",
     createdAt: user.createdAt
   };
 }
@@ -958,6 +1057,11 @@ function publicAppFeedback(feedback, { includeUser = false } = {}) {
     id: feedback.id,
     message: feedback.message || "",
     page: feedback.page || "",
+    category: feedback.category || "general",
+    status: feedback.status || "new",
+    priority: feedback.priority || "normal",
+    adminNote: includeUser ? feedback.adminNote || "" : "",
+    resolvedAt: feedback.resolvedAt || "",
     createdAt: feedback.createdAt,
     user: owner
       ? {
@@ -984,7 +1088,9 @@ function currentUser(req) {
   const session = sid ? sessions.get(sid) : null;
   const userId = session?.userId || (sid ? verifySessionToken(sid) : "");
   if (!userId) return null;
-  return db.users.find((user) => user.id === userId) || null;
+  const user = db.users.find((user) => user.id === userId) || null;
+  if (!user || user.disabledAt || user.deletedAt) return null;
+  return user;
 }
 
 function requireUser(req, res) {
@@ -1298,9 +1404,148 @@ function usageBreakdowns(events = []) {
   };
 }
 
+function startOfDay(date = new Date()) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function isSameDay(iso, base = new Date()) {
+  const date = new Date(iso);
+  return Number.isFinite(date.getTime()) && date >= startOfDay(base);
+}
+
+function activeLimits() {
+  return sanitizeSettings(db.settings).limits;
+}
+
+function countUserUsageToday(userId, eventType) {
+  return db.usageEvents.filter((event) => event.userId === userId && event.eventType === eventType && isSameDay(event.createdAt)).length;
+}
+
+function monthlyGlobalCostKrw() {
+  const monthly = db.usageEvents.filter((event) => isSameMonth(event.createdAt));
+  const usd = monthly.reduce((total, event) => total + Number(event.estimatedCostUsd || 0), 0);
+  return Number((usd * currentUsdToKrw()).toFixed(2));
+}
+
+function usageLimitResponse(res, message, meta = {}) {
+  json(res, 429, {
+    error: message,
+    code: "USAGE_LIMIT_REACHED",
+    limit: meta
+  });
+}
+
+function checkUsageLimit(user, eventType, res) {
+  const limits = activeLimits();
+  const map = {
+    chat_start: { key: "dailyStarts", label: "훈련 시작" },
+    chat_message: { key: "dailyChatMessages", label: "대화 메시지" },
+    feedback: { key: "dailyFeedbacks", label: "피드백 생성" }
+  };
+  const globalBudget = Number(limits.monthlyGlobalBudgetKrw || db.settings?.cost?.monthlyBudgetKrw || 0);
+  if (globalBudget > 0 && monthlyGlobalCostKrw() >= globalBudget) {
+    usageLimitResponse(res, "이번 달 운영 예산 한도에 도달했습니다. 운영자에게 문의해주세요.", {
+      type: "monthlyGlobalBudgetKrw",
+      limit: globalBudget,
+      used: monthlyGlobalCostKrw()
+    });
+    return false;
+  }
+  const target = map[eventType];
+  if (!target) return true;
+  const limit = Number(limits[target.key] || 0);
+  if (limit <= 0) return true;
+  const used = countUserUsageToday(user.id, eventType);
+  if (used >= limit) {
+    usageLimitResponse(res, `오늘의 ${target.label} 한도에 도달했습니다. 내일 다시 이용해주세요.`, {
+      type: target.key,
+      limit,
+      used
+    });
+    return false;
+  }
+  return true;
+}
+
+function publicUsageLimits(user) {
+  const limits = activeLimits();
+  const eventMap = {
+    dailyStarts: "chat_start",
+    dailyChatMessages: "chat_message",
+    dailyFeedbacks: "feedback"
+  };
+  return {
+    dailyStarts: { limit: Number(limits.dailyStarts || 0), used: user ? countUserUsageToday(user.id, eventMap.dailyStarts) : 0 },
+    dailyChatMessages: { limit: Number(limits.dailyChatMessages || 0), used: user ? countUserUsageToday(user.id, eventMap.dailyChatMessages) : 0 },
+    dailyFeedbacks: { limit: Number(limits.dailyFeedbacks || 0), used: user ? countUserUsageToday(user.id, eventMap.dailyFeedbacks) : 0 },
+    dailyAppFeedbacks: {
+      limit: Number(limits.dailyAppFeedbacks || 0),
+      used: user ? (db.appFeedbacks || []).filter((feedback) => feedback.userId === user.id && isSameDay(feedback.createdAt)).length : 0
+    },
+    monthlyGlobalBudgetKrw: { limit: Number(limits.monthlyGlobalBudgetKrw || 0), used: monthlyGlobalCostKrw() }
+  };
+}
+
+function clientIp(req) {
+  return String(req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "unknown").split(",")[0].trim();
+}
+
+function rateLimitKey(req, url) {
+  const user = currentUser(req);
+  return `${user?.id || clientIp(req)}:${req.method}:${url.pathname}`;
+}
+
+function checkRateLimit(req, res, url) {
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(req.method || "")) return true;
+  const now = Date.now();
+  const key = rateLimitKey(req, url);
+  const bucket = rateLimitBuckets.get(key) || { count: 0, resetAt: now + rateLimitWindowMs };
+  if (bucket.resetAt <= now) {
+    bucket.count = 0;
+    bucket.resetAt = now + rateLimitWindowMs;
+  }
+  bucket.count += 1;
+  rateLimitBuckets.set(key, bucket);
+  if (bucket.count > rateLimitMutationsPerWindow) {
+    json(res, 429, {
+      error: "요청이 너무 많습니다. 잠시 후 다시 시도해주세요.",
+      code: "RATE_LIMITED",
+      retryAfterMs: Math.max(0, bucket.resetAt - now)
+    });
+    return false;
+  }
+  return true;
+}
+
+function accountExportFor(user) {
+  const conversations = db.conversations
+    .filter((conversation) => conversation.userId === user.id)
+    .map((conversation) => publicConversation(conversation, { includeMessages: true, includeFeedback: true, includeHidden: true }));
+  return {
+    generatedAt: new Date().toISOString(),
+    user: publicUser(user),
+    stats: {
+      conversations: conversations.length,
+      finishedConversations: conversations.filter((conversation) => conversation.status === "finished").length
+    },
+    conversations,
+    appFeedbacks: (db.appFeedbacks || []).filter((feedback) => feedback.userId === user.id).map((feedback) => publicAppFeedback(feedback)),
+    usage: db.usageEvents.filter((event) => event.userId === user.id)
+  };
+}
+
 async function readJson(req) {
   const chunks = [];
-  for await (const chunk of req) chunks.push(chunk);
+  let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > maxJsonBodyBytes) {
+      const error = new Error("요청 본문이 너무 큽니다.");
+      error.statusCode = 413;
+      throw error;
+    }
+    chunks.push(chunk);
+  }
   const raw = Buffer.concat(chunks).toString("utf8");
   return raw ? JSON.parse(raw) : {};
 }
@@ -3095,8 +3340,11 @@ async function handleKakaoCallback(req, res, url) {
 async function handleAppApi(req, res, url) {
   const path = url.pathname;
   if (path === "/api/me" && req.method === "GET") {
+    const user = currentUser(req);
     json(res, 200, {
-      user: publicUser(currentUser(req)),
+      user: publicUser(user),
+      csrfToken: ensureCsrfCookie(req, res),
+      limits: publicUsageLimits(user),
       auth: {
         devLoginEnabled: devAuthEnabled,
         googleEnabled: Boolean(globalThis.process?.env?.GOOGLE_CLIENT_ID),
@@ -3122,7 +3370,7 @@ async function handleAppApi(req, res, url) {
     });
     await saveDb();
     createSession(res, user);
-    json(res, 200, { user: publicUser(user) });
+    json(res, 200, { user: publicUser(user), limits: publicUsageLimits(user) });
     return true;
   }
 
@@ -3130,6 +3378,56 @@ async function handleAppApi(req, res, url) {
     const sid = parseCookies(req).sid;
     if (sid) sessions.delete(sid);
     clearSessionCookie(res);
+    clearCsrfCookie(res);
+    json(res, 200, { ok: true });
+    return true;
+  }
+
+  if (path === "/api/me/export" && req.method === "GET") {
+    const user = requireUser(req, res);
+    if (!user) return true;
+    json(res, 200, { export: accountExportFor(user) });
+    return true;
+  }
+
+  if (path === "/api/me" && req.method === "DELETE") {
+    const user = requireUser(req, res);
+    if (!user) return true;
+    if (user.role === "admin" && db.users.filter((item) => item.role === "admin" && !item.disabledAt && !item.deletedAt).length <= 1) {
+      json(res, 400, { error: "마지막 관리자 계정은 탈퇴할 수 없습니다. 다른 관리자에게 권한을 넘긴 뒤 다시 시도해주세요." });
+      return true;
+    }
+    const now = new Date().toISOString();
+    const sid = parseCookies(req).sid;
+    user.email = "";
+    user.displayName = "탈퇴한 사용자";
+    user.avatarUrl = "";
+    user.providerId = `deleted:${user.id}`;
+    user.profile = {};
+    user.role = "user";
+    user.disabledAt = now;
+    user.deletedAt = now;
+    user.updatedAt = now;
+    for (const conversation of db.conversations) {
+      if (conversation.userId === user.id) {
+        conversation.hiddenByUserAt = conversation.hiddenByUserAt || now;
+        conversation.updatedAt = now;
+      }
+    }
+    for (const feedback of db.appFeedbacks || []) {
+      if (feedback.userId === user.id) {
+        feedback.userId = "";
+        feedback.userAgent = "";
+        feedback.message = "[계정 삭제 사용자의 앱 피드백]";
+      }
+    }
+    for (const event of db.usageEvents || []) {
+      if (event.userId === user.id) event.userId = "";
+    }
+    if (sid) sessions.delete(sid);
+    await saveDb();
+    clearSessionCookie(res);
+    clearCsrfCookie(res);
     json(res, 200, { ok: true });
     return true;
   }
@@ -3155,6 +3453,7 @@ async function handleAppApi(req, res, url) {
     if (!user) return true;
     const body = await readJson(req);
     const message = String(body.message || "").trim();
+    const category = ["bug", "idea", "content", "general"].includes(body.category) ? body.category : "general";
     if (message.length < 2) {
       json(res, 400, { error: "피드백 내용을 2자 이상 입력해주세요." });
       return true;
@@ -3163,10 +3462,26 @@ async function handleAppApi(req, res, url) {
       json(res, 400, { error: "피드백은 2000자 이내로 입력해주세요." });
       return true;
     }
+    const limits = activeLimits();
+    const dailyLimit = Number(limits.dailyAppFeedbacks || 0);
+    const usedToday = (db.appFeedbacks || []).filter((feedback) => feedback.userId === user.id && isSameDay(feedback.createdAt)).length;
+    if (dailyLimit > 0 && usedToday >= dailyLimit) {
+      usageLimitResponse(res, "오늘 보낼 수 있는 앱 피드백 한도에 도달했습니다. 내일 다시 보내주세요.", {
+        type: "dailyAppFeedbacks",
+        limit: dailyLimit,
+        used: usedToday
+      });
+      return true;
+    }
     const feedback = {
       id: randomUUID(),
       userId: user.id,
       message,
+      category,
+      status: "new",
+      priority: "normal",
+      adminNote: "",
+      resolvedAt: "",
       page: String(body.page || "").trim().slice(0, 80),
       userAgent: String(req.headers["user-agent"] || "").slice(0, 500),
       createdAt: new Date().toISOString()
@@ -3381,6 +3696,28 @@ async function handleAppApi(req, res, url) {
     return true;
   }
 
+  const adminFeedbackIdMatch = path.match(/^\/api\/admin\/app-feedbacks\/([^/]+)$/);
+  if (adminFeedbackIdMatch && req.method === "PUT") {
+    const user = requireAdmin(req, res);
+    if (!user) return true;
+    const feedback = (db.appFeedbacks || []).find((item) => item.id === decodeURIComponent(adminFeedbackIdMatch[1]));
+    if (!feedback) {
+      json(res, 404, { error: "앱 피드백을 찾지 못했습니다." });
+      return true;
+    }
+    const body = await readJson(req);
+    if (["new", "triaged", "fixed", "wontfix"].includes(body.status)) {
+      feedback.status = body.status;
+      feedback.resolvedAt = ["fixed", "wontfix"].includes(body.status) ? new Date().toISOString() : "";
+    }
+    if (["low", "normal", "high"].includes(body.priority)) feedback.priority = body.priority;
+    if (body.adminNote != null) feedback.adminNote = String(body.adminNote || "").trim().slice(0, 1000);
+    feedback.updatedAt = new Date().toISOString();
+    await saveDb();
+    json(res, 200, { feedback: publicAppFeedback(feedback, { includeUser: true }) });
+    return true;
+  }
+
   if (path === "/api/admin/settings" && req.method === "GET") {
     const user = requireAdmin(req, res);
     if (!user) return true;
@@ -3544,6 +3881,7 @@ async function handleApi(req, res, url) {
     const persona = getPersona(session.personaId);
 
     if (path === "/api/start") {
+      if (!checkUsageLimit(user, "chat_start", res)) return;
       const sessionWithScene = { ...session, visibleScene: visibleSceneFor(session, persona) };
       const systemPrompt = await personaSystemPrompt();
       const prompt = roleplayPromptPartsFor(sessionWithScene, persona, [], { initial: true });
@@ -3589,6 +3927,7 @@ async function handleApi(req, res, url) {
     }
 
     if (path === "/api/chat") {
+      if (!checkUsageLimit(user, "chat_message", res)) return;
       const conversation = findConversationForUser(user, body.conversationId);
       if (!conversation) {
         void recordAppLog({
@@ -3678,6 +4017,7 @@ async function handleApi(req, res, url) {
     }
 
     if (path === "/api/feedback") {
+      if (!checkUsageLimit(user, "feedback", res)) return;
       const conversation = findConversationForUser(user, body.conversationId);
       if (!conversation) {
         void recordAppLog({
@@ -3808,6 +4148,14 @@ async function handleApi(req, res, url) {
 
     json(res, 404, { error: "Unknown API route." });
   } catch (error) {
+    if (error?.statusCode === 413) {
+      json(res, 413, { error: error.message, code: "PAYLOAD_TOO_LARGE" });
+      return;
+    }
+    if (error instanceof SyntaxError) {
+      json(res, 400, { error: "요청 JSON 형식이 올바르지 않습니다.", code: "BAD_REQUEST" });
+      return;
+    }
     json(res, 500, publicServerError(error, { eventType: "api_unhandled_error", path, method: req.method }));
   }
 }
@@ -3825,13 +4173,39 @@ async function serveStatic(req, res, pathname) {
 
   try {
     const body = await readFile(filePath);
+    const ext = extname(filePath);
+    const isHtml = ext === ".html";
+    const cacheControl =
+      requested === "/sw.js"
+        ? "no-cache"
+        : isHtml || ext === ".webmanifest"
+          ? "no-store"
+          : /\.[a-f0-9]{8,}\./i.test(filePath)
+            ? "public, max-age=31536000, immutable"
+            : "no-cache";
     res.writeHead(200, {
-      "Content-Type": MIME_TYPES[extname(filePath)] || "application/octet-stream",
-      "Cache-Control": "no-store"
+      ...securityHeaders({ html: isHtml }),
+      "Content-Type": MIME_TYPES[ext] || "application/octet-stream",
+      "Cache-Control": cacheControl
     });
     res.end(body);
   } catch {
-    res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+    const fallback = join(publicDir, "index.html");
+    if (req.method === "GET" && !pathname.includes(".")) {
+      try {
+        const body = await readFile(fallback);
+        res.writeHead(200, {
+          ...securityHeaders({ html: true }),
+          "Content-Type": MIME_TYPES[".html"],
+          "Cache-Control": "no-store"
+        });
+        res.end(body);
+        return;
+      } catch {
+        // Fall through to the plain 404 below.
+      }
+    }
+    res.writeHead(404, { ...securityHeaders(), "Content-Type": "text/plain; charset=utf-8" });
     res.end("Not found");
   }
 }
@@ -3875,6 +4249,14 @@ const server = createServer(async (req, res) => {
   }
 
   if ((req.method === "GET" || req.method === "POST" || req.method === "PUT" || req.method === "DELETE") && url.pathname.startsWith("/api/")) {
+    if (!checkRateLimit(req, res, url)) return;
+    if (!csrfTokenValid(req)) {
+      json(res, 403, {
+        error: "요청 보안 토큰이 만료되었습니다. 페이지를 새로고침한 뒤 다시 시도해주세요.",
+        code: "CSRF_REQUIRED"
+      });
+      return;
+    }
     await handleApi(req, res, url);
     return;
   }

@@ -1,0 +1,26 @@
+{
+  "name": "복음 대화 훈련소",
+  "short_name": "복음 훈련",
+  "description": "복음 전도 대화를 AI 페르소나와 먼저 연습하고 피드백 리포트를 확인하세요.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#fffdf6",
+  "theme_color": "#057c66",
+  "lang": "ko-KR",
+  "icons": [
+    {
+      "src": "/assets/app-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/assets/app-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

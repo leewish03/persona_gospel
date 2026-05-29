@@ -10,6 +10,20 @@ async function parseJson(response) {
   return data;
 }
 
+function csrfToken() {
+  if (typeof document === "undefined") return "";
+  const match = document.cookie.match(/(?:^|;\s*)csrf=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
+function jsonHeaders() {
+  const token = csrfToken();
+  return {
+    "Content-Type": "application/json",
+    ...(token ? { "X-CSRF-Token": token } : {})
+  };
+}
+
 export async function getJson(path) {
   return parseJson(await fetch(path));
 }
@@ -18,7 +32,7 @@ export async function postJson(path, payload = {}) {
   return parseJson(
     await fetch(path, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: jsonHeaders(),
       body: JSON.stringify(payload)
     })
   );
@@ -28,12 +42,12 @@ export async function putJson(path, payload = {}) {
   return parseJson(
     await fetch(path, {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: jsonHeaders(),
       body: JSON.stringify(payload)
     })
   );
 }
 
 export async function deleteJson(path) {
-  return parseJson(await fetch(path, { method: "DELETE" }));
+  return parseJson(await fetch(path, { method: "DELETE", headers: csrfToken() ? { "X-CSRF-Token": csrfToken() } : {} }));
 }

@@ -227,6 +227,11 @@ function PendingActionDialog({ state, actions }) {
       title: "이 훈련 기록을 삭제할까요?",
       description: "내 기록 목록과 성장 요약에서 숨겨집니다. 관리자는 운영 기록 확인을 위해 계속 볼 수 있습니다.",
       action: "삭제하기"
+    },
+    accountDelete: {
+      title: "계정을 삭제할까요?",
+      description: "내 계정은 비활성화되고 개인정보는 익명화됩니다. 훈련 기록은 내 화면과 통계에서 숨겨지며 운영 감사 기록은 보존됩니다.",
+      action: "계정 삭제"
     }
   }[pending?.type || "navigation"];
 
@@ -682,6 +687,13 @@ function SettingsScreen({ state, actions }) {
   const user = state.auth.user;
   const profile = user?.profile || {};
   const donation = state.appSettings?.donation || {};
+  const limits = state.auth.limits || {};
+  const usageRows = [
+    ["훈련 시작", limits.dailyStarts],
+    ["대화 메시지", limits.dailyChatMessages],
+    ["피드백 생성", limits.dailyFeedbacks],
+    ["앱 피드백", limits.dailyAppFeedbacks]
+  ].filter(([, item]) => item);
   return (
     <div className="grid gap-4">
       <Card>
@@ -692,6 +704,23 @@ function SettingsScreen({ state, actions }) {
           <p><b>소속 교회</b> {profile.church || "미입력"}</p>
           <p><b>사용 용도</b> {profile.useCase || "미입력"}</p>
           <Button variant="secondary" onClick={() => { actions.setProfileForm({ name: profile.name || user?.displayName || "", age: profile.age || "", gender: profile.gender || "", church: profile.church || "", useCase: profile.useCase || "" }); actions.goTo("profile"); }}>프로필 수정</Button>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>이용 한도</CardTitle>
+          <CardDescription>비용 보호를 위해 하루 사용량이 제한됩니다.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-2 text-sm">
+          {usageRows.map(([label, item]) => (
+            <div key={label} className="flex items-center justify-between gap-3 rounded-xl border bg-muted/30 px-3 py-2">
+              <span>{label}</span>
+              <span className="font-semibold">{formatCount(item.used || 0)} / {item.limit ? formatCount(item.limit) : "무제한"}</span>
+            </div>
+          ))}
+          {limits.monthlyGlobalBudgetKrw?.limit ? (
+            <p className="text-xs text-muted-foreground">월 운영 예산 사용: {formatKrw(limits.monthlyGlobalBudgetKrw.used || 0)} / {formatKrw(limits.monthlyGlobalBudgetKrw.limit)}</p>
+          ) : null}
         </CardContent>
       </Card>
       <Card>
@@ -707,6 +736,19 @@ function SettingsScreen({ state, actions }) {
           <CardDescription>불편한 점이나 개선 아이디어를 바로 남겨주세요.</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3">
+          <SelectControl
+            id="app-feedback-category"
+            label="분류"
+            value={state.appFeedbackCategory}
+            onChange={actions.setAppFeedbackCategory}
+            placeholder="분류 선택"
+            options={[
+              { value: "general", label: "일반 의견" },
+              { value: "bug", label: "오류 제보" },
+              { value: "idea", label: "개선 아이디어" },
+              { value: "content", label: "페르소나/피드백 품질" }
+            ]}
+          />
           <Textarea
             value={state.appFeedbackForm}
             onChange={(event) => actions.setAppFeedbackForm(event.target.value)}
@@ -732,6 +774,27 @@ function SettingsScreen({ state, actions }) {
               <AlertDescription>{state.appFeedbackNotice}</AlertDescription>
             </Alert>
           ) : null}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>개인정보 및 계정</CardTitle>
+          <CardDescription>내 데이터 저장, 약관 확인, 계정 삭제를 관리합니다.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3">
+          <div className="grid grid-cols-2 gap-2">
+            <Button type="button" variant="secondary" onClick={actions.exportMyData} disabled={state.isBusy}>
+              <Download /> 내 데이터 저장
+            </Button>
+            <Button type="button" variant="destructive" onClick={actions.requestDeleteAccount} disabled={state.isBusy}>
+              <Trash2 /> 계정 삭제
+            </Button>
+          </div>
+          <div className="flex flex-wrap gap-3 text-sm">
+            <a className="font-semibold text-primary underline-offset-4 hover:underline" href="/privacy.html" target="_blank" rel="noreferrer">개인정보 처리방침</a>
+            <a className="font-semibold text-primary underline-offset-4 hover:underline" href="/terms.html" target="_blank" rel="noreferrer">이용약관</a>
+            <span className="text-muted-foreground">AI 페르소나 응답과 피드백은 훈련용 참고 자료입니다.</span>
+          </div>
         </CardContent>
       </Card>
       <Card>
@@ -1139,11 +1202,18 @@ function AdminTables({ state, users, conversations, usage, logs = [], appFeedbac
               key={feedback.id}
               title={feedback.user?.name || feedback.user?.email || "사용자"}
               subtitle={formatDate(feedback.createdAt)}
-              badge={feedback.page ? <Badge variant="secondary">{feedback.page}</Badge> : null}
+              badge={<div className="flex flex-wrap justify-end gap-1"><Badge variant="outline">{feedback.category || "general"}</Badge><Badge variant={feedback.status === "new" ? "destructive" : "secondary"}>{feedback.status || "new"}</Badge>{feedback.page ? <Badge variant="secondary">{feedback.page}</Badge> : null}</div>}
               items={[
                 ["내용", feedback.message || "—"],
                 ["사용자", feedback.user?.email || feedback.user?.id || "—"]
               ]}
+              footer={
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" variant="secondary" onClick={() => actions.updateAdminAppFeedback(feedback.id, { status: "triaged" })}>확인</Button>
+                  <Button size="sm" variant="secondary" onClick={() => actions.updateAdminAppFeedback(feedback.id, { status: "fixed" })}>해결</Button>
+                  <Button size="sm" variant="outline" onClick={() => actions.updateAdminAppFeedback(feedback.id, { status: "wontfix" })}>보류</Button>
+                </div>
+              }
             />
           ))}
           {!appFeedbacks.length ? <p className="rounded-xl border bg-muted/40 p-3 text-sm text-muted-foreground">아직 앱 피드백이 없습니다.</p> : null}

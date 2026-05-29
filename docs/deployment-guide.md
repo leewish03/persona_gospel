@@ -81,6 +81,15 @@ KAKAO_CLIENT_SECRET=
 ENABLE_DEV_LOGIN=false
 NODE_ENV=production
 STORAGE_DIR=/var/data
+SESSION_SECRET=충분히 긴 랜덤 문자열
+DAILY_USER_START_LIMIT=30
+DAILY_USER_CHAT_LIMIT=300
+DAILY_USER_FEEDBACK_LIMIT=20
+DAILY_USER_APP_FEEDBACK_LIMIT=10
+MONTHLY_GLOBAL_BUDGET_KRW=0
+MAX_JSON_BODY_BYTES=262144
+RATE_LIMIT_WINDOW_MS=60000
+RATE_LIMIT_MUTATIONS_PER_WINDOW=80
 ```
 
 ## OAuth Callback URL
@@ -109,8 +118,10 @@ Kakao:  http://localhost:4173/auth/kakao/callback
 6. 배포 URL을 확인한다.
 7. `APP_BASE_URL`을 실제 배포 URL로 바꾼다.
 8. Google/Kakao OAuth callback URL을 등록한다.
-9. 로그인, 프로필 저장, 대화 시작, 피드백 저장, 기록 조회를 테스트한다.
-10. 도메인을 연결한다.
+9. Supabase 사용 시 `docs/launch-readiness-migration.sql`을 먼저 적용한다.
+10. 로그인, 프로필 저장, 대화 시작, 피드백 저장, 기록 조회를 테스트한다.
+11. `npm run qa:launch` 또는 배포 URL 기준 `QA_BASE_URL=https://서비스도메인 npm run qa:launch`로 계정 삭제, 데이터 내보내기, CSRF, PWA 정적 파일을 확인한다.
+12. 도메인을 연결한다.
 
 ## 내가 할 수 있는 작업
 

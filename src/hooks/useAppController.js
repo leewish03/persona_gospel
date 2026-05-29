@@ -24,6 +24,10 @@ function userMessageForError(error, context = "general") {
 
   if (network) return "네트워크 연결이 불안정합니다. 연결 상태를 확인한 뒤 다시 시도해주세요.";
   if (code === "PROFILE_REQUIRED") return "훈련을 시작하려면 먼저 기본 정보를 입력해주세요.";
+  if (code === "USAGE_LIMIT_REACHED") return raw || "오늘 이용 가능한 한도에 도달했습니다. 잠시 후 다시 시도해주세요.";
+  if (code === "CSRF_REQUIRED") return "보안 토큰이 만료되었습니다. 페이지를 새로고침한 뒤 다시 시도해주세요.";
+  if (code === "RATE_LIMITED") return "요청이 너무 많습니다. 잠시 후 다시 시도해주세요.";
+  if (code === "PAYLOAD_TOO_LARGE") return "입력한 내용이 너무 깁니다. 내용을 줄인 뒤 다시 시도해주세요.";
   if (status === 401) return "로그인이 필요합니다. 다시 로그인한 뒤 이용해주세요.";
   if (status === 403) return raw || "이 작업을 사용할 권한이 없습니다.";
   if (status === 404) {
@@ -125,6 +129,7 @@ export function useAppController() {
   const [shareNotice, setShareNotice] = useState("");
   const [pendingDialog, setPendingDialog] = useState(null);
   const [appFeedbackForm, setAppFeedbackForm] = useState("");
+  const [appFeedbackCategory, setAppFeedbackCategory] = useState("general");
   const [appFeedbackNotice, setAppFeedbackNotice] = useState("");
 
   const hasUser = Boolean(auth.user);
@@ -285,6 +290,49 @@ export function useAppController() {
     setPendingDialog({ type: "historyDelete", id });
   }, []);
 
+  const exportMyData = useCallback(async () => {
+    setIsBusy(true);
+    setShareNotice("");
+    try {
+      const data = await getJson("/api/me/export");
+      const blob = new Blob([JSON.stringify(data.export || data, null, 2)], { type: "application/json;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `복음대화훈련소-내데이터-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.append(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      setShareNotice("내 데이터를 저장했습니다.");
+    } catch (error) {
+      setShareNotice(userMessageForError(error));
+    } finally {
+      setIsBusy(false);
+    }
+  }, []);
+
+  const requestDeleteAccount = useCallback(() => {
+    setPendingDialog({ type: "accountDelete" });
+  }, []);
+
+  const deleteAccountConfirmed = useCallback(async () => {
+    setIsBusy(true);
+    try {
+      await deleteJson("/api/me");
+      setPendingDialog(null);
+      setAuth((value) => ({ ...value, user: null, limits: null }));
+      resetAllConfirmed();
+      setShareNotice("계정이 삭제되었습니다.");
+      setCurrentScreen("home");
+    } catch (error) {
+      setPendingDialog(null);
+      setErrors((value) => ({ ...value, global: userMessageForError(error) }));
+    } finally {
+      setIsBusy(false);
+    }
+  }, [resetAllConfirmed]);
+
   const deleteHistoryDetailConfirmed = useCallback(async (id) => {
     if (!id) return;
     setIsBusy(true);
@@ -377,6 +425,16 @@ export function useAppController() {
     }
   }, [isAdmin]);
 
+  const updateAdminAppFeedback = useCallback(async (id, patch) => {
+    if (!id) return;
+    try {
+      await putJson(`/api/admin/app-feedbacks/${encodeURIComponent(id)}`, patch);
+      await loadAdmin();
+    } catch (error) {
+      setErrors((value) => ({ ...value, global: userMessageForError(error, "admin") }));
+    }
+  }, [loadAdmin]);
+
   const closeAdminConversationDetail = useCallback(() => {
     setAdmin((value) => ({ ...value, conversationDetail: null }));
   }, []);
@@ -461,6 +519,7 @@ export function useAppController() {
         setSelectedPersonaId(loadedPersonas[0]?.id || "");
         setAuth({
           user: me.user,
+          limits: me.limits || null,
           devLoginEnabled: me.auth?.devLoginEnabled,
           googleEnabled: me.auth?.googleEnabled,
           kakaoEnabled: me.auth?.kakaoEnabled
@@ -517,7 +576,7 @@ export function useAppController() {
     setErrors((value) => ({ ...value, auth: "" }));
     try {
       const data = await postJson("/api/dev-login", { email: "dev@example.local", displayName: "개발용 사용자" });
-      setAuth((value) => ({ ...value, user: data.user }));
+      setAuth((value) => ({ ...value, user: data.user, limits: data.limits || value.limits }));
       fillProfileForm(data.user);
       setCurrentScreen(data.user.profileComplete ? "home" : "profile");
     } catch (error) {
@@ -527,7 +586,7 @@ export function useAppController() {
 
   const logout = useCallback(async () => {
     await postJson("/api/logout");
-    setAuth((value) => ({ ...value, user: null }));
+    setAuth((value) => ({ ...value, user: null, limits: null }));
     resetAllConfirmed();
   }, [resetAllConfirmed]);
 
@@ -663,8 +722,12 @@ export function useAppController() {
     }
     if (pending.type === "historyDelete") {
       await deleteHistoryDetailConfirmed(pending.id);
+      return;
     }
-  }, [deleteHistoryDetailConfirmed, finishSessionConfirmed, goTo, pendingDialog, resetAllConfirmed]);
+    if (pending.type === "accountDelete") {
+      await deleteAccountConfirmed();
+    }
+  }, [deleteAccountConfirmed, deleteHistoryDetailConfirmed, finishSessionConfirmed, goTo, pendingDialog, resetAllConfirmed]);
 
   const restoreSession = useCallback((session = {}) => {
     setSelectedPersonaId(session.personaId || selectedPersonaId);
@@ -740,15 +803,16 @@ export function useAppController() {
     setIsBusy(true);
     setAppFeedbackNotice("");
     try {
-      await postJson("/api/app-feedback", { message, page: currentScreen });
+      await postJson("/api/app-feedback", { message, category: appFeedbackCategory, page: currentScreen });
       setAppFeedbackForm("");
+      setAppFeedbackCategory("general");
       setAppFeedbackNotice("피드백을 보냈습니다. 개선에 참고하겠습니다.");
     } catch (error) {
       setAppFeedbackNotice(userMessageForError(error, "appFeedback"));
     } finally {
       setIsBusy(false);
     }
-  }, [appFeedbackForm, currentScreen, isBusy]);
+  }, [appFeedbackCategory, appFeedbackForm, currentScreen, isBusy]);
 
   const handlePrimaryAction = useCallback(async () => {
     if (currentScreen === "home") {
@@ -826,6 +890,7 @@ export function useAppController() {
       shareNotice,
       pendingDialog,
       appFeedbackForm,
+      appFeedbackCategory,
       appFeedbackNotice,
       hasUser,
       profileComplete,
@@ -840,6 +905,7 @@ export function useAppController() {
       setHistory,
       setAdmin,
       setAppFeedbackForm,
+      setAppFeedbackCategory,
       cancelPendingDialog,
       confirmPendingDialog,
       goTo,
@@ -869,8 +935,11 @@ export function useAppController() {
       setAdminUserEditor,
       setAdminUserEditorProfile,
       saveAdminUser,
+      updateAdminAppFeedback,
       saveAdminSettings,
       submitAppFeedback,
+      exportMyData,
+      requestDeleteAccount,
       shareFeedback,
       handlePrimaryAction,
       handleSecondaryAction
