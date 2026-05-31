@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { Buffer } from "node:buffer";
 import { existsSync, readFileSync } from "node:fs";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
@@ -43,9 +44,9 @@ const sessionSecret =
   globalThis.process?.env?.GOOGLE_CLIENT_SECRET ||
   globalThis.process?.env?.KAKAO_CLIENT_SECRET ||
   "";
-const storageDir = globalThis.process?.env?.STORAGE_DIR || join(rootDir, "storage");
-const dbPath = join(storageDir, "db.json");
-const appLogPath = join(storageDir, "app-logs.jsonl");
+let storageDir = globalThis.process?.env?.STORAGE_DIR || join(rootDir, "storage");
+let dbPath = join(storageDir, "db.json");
+let appLogPath = join(storageDir, "app-logs.jsonl");
 const supabaseUrl = String(globalThis.process?.env?.SUPABASE_URL || "").replace(/\/+$/, "");
 const supabaseServiceRoleKey = globalThis.process?.env?.SUPABASE_SERVICE_ROLE_KEY || "";
 const usdToKrw = Number(globalThis.process?.env?.USD_TO_KRW || 1480);
@@ -206,7 +207,7 @@ function emptyDb() {
 }
 
 async function loadDb() {
-  await mkdir(storageDir, { recursive: true });
+  await ensureStorageDir();
   if (supabaseUrl && supabaseServiceRoleKey) {
     try {
       return await loadSupabaseDb();
@@ -239,6 +240,20 @@ async function saveDb() {
     } catch (error) {
       console.error("Supabase save failed. JSON storage was still updated.", error);
     }
+  }
+}
+
+async function ensureStorageDir() {
+  try {
+    await mkdir(storageDir, { recursive: true });
+  } catch (error) {
+    if (!["EACCES", "EROFS"].includes(error?.code || "")) throw error;
+    const fallback = join(tmpdir(), "gospel-conversation-simulator");
+    console.warn(`Storage directory ${storageDir} is not writable; falling back to ${fallback}.`);
+    storageDir = fallback;
+    dbPath = join(storageDir, "db.json");
+    appLogPath = join(storageDir, "app-logs.jsonl");
+    await mkdir(storageDir, { recursive: true });
   }
 }
 
