@@ -199,6 +199,23 @@
 - DB 스키마, Supabase, 데이터 복구, 로그/피드백 테이블이 있으면 Supabase/Data Agent를 사용한다.
 - 코드 변경이 생기면 QA/Regression Agent를 마지막에 사용한다.
 
+기본 활성 로스터는 아래 4개만 둔다.
+
+- Backend/API Agent
+- Frontend/UX Agent
+- Supabase/Data Agent
+- QA/Regression Agent
+
+운용 제한:
+
+- 한 작업에서 동시에 띄우는 에이전트는 최대 3개로 제한한다.
+- 일반 기능 구현은 Backend/API, Frontend/UX, QA/Regression 중 필요한 것만 쓴다.
+- Supabase/Data Agent는 DB 스키마, 운영 데이터, RLS, 마이그레이션이 실제로 관련될 때만 쓴다.
+- QA/Regression Agent는 구현 패치가 나온 뒤 1개만 실행한다.
+- 이미 같은 역할의 에이전트가 있으면 새로 만들지 않고 기존 결과를 재사용한다.
+- 완료, 실패, `not_found` 상태가 된 에이전트는 메인 Codex가 보고 후 더 이상 추적하지 않는다.
+- Git commit, push, master 병합은 하위 에이전트에게 맡기지 않는다.
+
 ## bkit-Style Workflow
 
 기본 흐름은 Plan → Design → Do → Check → Act → Report로 진행한다.
