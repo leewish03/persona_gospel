@@ -17,7 +17,7 @@
 - 정적 프론트엔드: `public`
 - 페르소나 데이터: `data/personas.json`
 - 프롬프트: `prompts`
-- 사용자/대화 저장: `storage/db.json`
+- 사용자/대화 저장: Supabase 우선, JSON fallback은 `storage/db.json`
 - 서버 소유 OpenAI API Key 사용
 
 ## 작은 MVP 배포
@@ -26,18 +26,19 @@
 
 ```text
 호스팅: Render / Railway / Fly.io 같은 Node 서버 호스팅
-저장소: persistent disk에 storage/db.json 보관
+저장소: Supabase 또는 persistent disk의 storage/db.json
 로그인: Google/Kakao OAuth
 AI 비용: 운영자 OpenAI API Key
 ```
 
 이 저장소에는 Render Blueprint용 `render.yaml`이 포함되어 있다.
-Render에서 Blueprint로 연결하면 web service, persistent disk, 환경변수 슬롯이 함께 생성된다.
+Render에서 Blueprint로 연결하면 web service와 환경변수 슬롯이 함께 생성된다.
 
 주의:
 
-- `storage/db.json`은 반드시 persistent disk에 있어야 한다.
-- Render 배포에서는 `STORAGE_DIR=/var/data`를 사용하고, persistent disk를 `/var/data`에 마운트한다.
+- Supabase를 쓰는 운영 환경에서는 `SUPABASE_URL`과 `SUPABASE_SERVICE_ROLE_KEY`를 반드시 설정한다.
+- JSON fallback을 운영 저장소로 쓸 때만 persistent disk를 연결하고 `STORAGE_DIR`을 마운트 경로에 맞춘다.
+- persistent disk 없이 JSON fallback으로만 운영하면 재배포/재시작 시 저장 데이터가 유실될 수 있다.
 - 서버가 재시작되면 현재 로그인 세션은 풀릴 수 있다.
 - 여러 서버 인스턴스를 동시에 띄우면 JSON 파일 저장 방식은 부적합하다.
 
