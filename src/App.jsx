@@ -431,7 +431,7 @@ function ReviewScreen({ state }) {
         </CardContent>
       </Card>
       <Card>
-        <img className="aspect-video w-full rounded-t-xl object-cover" src={personaImages[persona.id]} alt={`${persona.name} 프로필`} />
+        <img className="aspect-square w-full rounded-t-xl object-cover" src={personaImages[persona.id]} alt={`${persona.name} 프로필`} />
         <CardHeader>
           <CardTitle>{persona.name}</CardTitle>
           <CardDescription>{persona.shortDescription}</CardDescription>
