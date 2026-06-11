@@ -1971,6 +1971,80 @@ function recordUsageEvent({ userId, conversationId = "", eventType, provider = "
   db.usageEvents = db.usageEvents.slice(0, 5000);
 }
 
+function mergeUsageRecords(...records) {
+  return records.filter(Boolean).reduce(
+    (merged, usage) => ({
+      inputTokens: Number(merged.inputTokens || 0) + Number(usage.inputTokens || 0),
+      outputTokens: Number(merged.outputTokens || 0) + Number(usage.outputTokens || 0),
+      cacheCreationInputTokens:
+        Number(merged.cacheCreationInputTokens || 0) + Number(usage.cacheCreationInputTokens || 0),
+      cacheReadInputTokens: Number(merged.cacheReadInputTokens || 0) + Number(usage.cacheReadInputTokens || 0),
+      reasoningTokens: Number(merged.reasoningTokens || 0) + Number(usage.reasoningTokens || 0)
+    }),
+    { inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, reasoningTokens: 0 }
+  );
+}
+
+function normalizeGeneratedText(text = "") {
+  return String(text || "").replace(/\r/g, "").trim();
+}
+
+function collapseAdjacentDuplicateMessages(messages = []) {
+  const collapsed = [];
+  let removed = 0;
+  for (const message of messages) {
+    const previous = collapsed.at(-1);
+    if (previous && previous.role === message.role && previous.content === message.content) {
+      removed += 1;
+      continue;
+    }
+    collapsed.push(message);
+  }
+  return { messages: collapsed, removed };
+}
+
+const requiredFeedbackHeadings = [
+  "## 한줄 평가",
+  "## 잘한 점 2개",
+  "## 가장 고칠 점 3개",
+  "## 문제 발화 교정",
+  "## 다음 훈련 과제"
+];
+
+function feedbackStructureReport(text = "") {
+  const normalized = normalizeGeneratedText(text);
+  const missingHeadings = requiredFeedbackHeadings.filter((heading) => !normalized.includes(heading));
+  const compactLength = normalized.replace(/\s+/g, " ").trim().length;
+  const lines = normalized
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const lastLine = lines.at(-1) || "";
+  const startsWithOneLineEval = normalized.startsWith("## 한줄 평가");
+  const hasCorrection = normalized.includes("## 문제 발화 교정");
+  const hasNextTask = normalized.includes("## 다음 훈련 과제");
+  const looksTruncated =
+    !hasNextTask ||
+    /(^|[^0-9])[-*]\s*$/.test(lastLine) ||
+    /[:"'“‘(<\-]$/.test(lastLine) ||
+    /^##\s*/.test(lastLine);
+  const tooShort = compactLength > 0 && compactLength < 700;
+  const tooLong = compactLength > 1400;
+  return {
+    missingHeadings,
+    compactLength,
+    startsWithOneLineEval,
+    hasCorrection,
+    hasNextTask,
+    looksTruncated,
+    tooShort,
+    tooLong,
+    needsRepair: Boolean(
+      missingHeadings.length || !startsWithOneLineEval || !hasCorrection || !hasNextTask || looksTruncated || tooShort || tooLong
+    )
+  };
+}
+
 function summarizeFeedback(text = "") {
   const clean = String(text)
     .replace(/[#*_>`-]/g, "")
@@ -2088,6 +2162,62 @@ function repeatedQuestionRisk(messages = []) {
   return risks.length ? risks.join(", ") : "최근 질문 구조를 그대로 반복하지 말 것";
 }
 
+function repeatedSurfaceRisk(messages = []) {
+  const recentMessages = recentAssistantMessages(messages, 4).map((message) => message.content || "");
+  const recentText = recentMessages.join("\n");
+  const risks = [];
+  const phrasePatterns = [
+    ["그 말", /그 말/g],
+    ["솔직히", /솔직히/g],
+    ["아직 모르", /아직\s*(잘\s*)?모르/g],
+    ["좀 다르게 들", /좀\s*다르게\s*들/g],
+    ["완전", /완전/g],
+    ["뭔가", /뭔가/g],
+    ["그냥", /그냥/g]
+  ];
+  for (const [label, pattern] of phrasePatterns) {
+    const count = (recentText.match(pattern) || []).length;
+    if (count >= 2) risks.push(`'${label}' 완충 표현 반복`);
+  }
+
+  const openings = recentMessages
+    .map((text) => (text.match(/^\s*([가-힣A-Za-z0-9"'‘“]{1,12})/) || [])[1])
+    .filter(Boolean);
+  const repeatedOpenings = openings.filter((opening, index) => openings.indexOf(opening) !== index);
+  if (repeatedOpenings.length) {
+    risks.push(`문장 시작 '${[...new Set(repeatedOpenings)].join(", ")}' 반복`);
+  }
+
+  if (!risks.length) return "최근 표면 표현 반복은 크지 않음";
+  return `${risks.join(", ")}. 같은 금지어를 피하는 데서 끝내지 말고, 다른 장면 단서/몸의 반응/구체 고민으로 바꿔 말할 것`;
+}
+
+function personaBoundaryHints(persona = {}) {
+  const template = persona.roleplayTemplate || {};
+  const pressureReaction =
+    template.relationshipBehavior?.whenPressured ||
+    template.trustResponses?.ifUserPushes ||
+    "압박받으면 한 단계 방어적으로 반응하고 핵심 장벽으로 돌아간다.";
+  const respectedReaction =
+    template.relationshipBehavior?.whenRespected ||
+    template.trustResponses?.ifUserListens ||
+    "존중받으면 조금 더 구체화하되 결론은 유보한다.";
+  const doNotResolve =
+    template.lateSessionTension?.doNotResolve ||
+    template.shortSessionBoundaries?.[0] ||
+    "한 번의 대화에서 핵심 장벽을 해결하지 않는다.";
+  const boundaries = (template.shortSessionBoundaries || []).slice(0, 3);
+  const avoidRepeating = (template.speechFingerprint?.avoidRepeating || []).slice(0, 4);
+  return [
+    "페르소나 유지 규율:",
+    `- 압박받을 때: ${pressureReaction}`,
+    `- 존중받을 때: ${respectedReaction}`,
+    `- 이번 세션 해결 금지: ${doNotResolve}`,
+    `- 짧은 세션 한계: ${boundaries.length ? boundaries.join(" / ") : "핵심 장벽을 유지한다."}`,
+    `- 반복 금지: ${avoidRepeating.length ? avoidRepeating.join(" / ") : "같은 완충 표현과 장벽 문장을 반복하지 않는다."}`
+  ].join("\n");
+}
+
 function conversationStateHints(messages = [], persona = {}) {
   const conversationText = messages.map((message) => message.content || "").join("\n");
   const userText = messages
@@ -2109,6 +2239,7 @@ function conversationStateHints(messages = [], persona = {}) {
     `- 이미 사용자가 다룬 복음 요소: ${gospel.length ? gospel.join(", ") : "아직 직접 다루지 않음"}`,
     `- 페르소나가 아직 받아들이지 못한 지점: ${remainingBarrier}`,
     `- 최근 반복 위험: ${repeatedQuestionRisk(messages)}`,
+    `- 최근 표면 표현 위험: ${repeatedSurfaceRisk(messages)}`,
     `- 다음으로 자연스러운 압력: ${nextPressure}`
   ].join("\n");
 }
@@ -2520,6 +2651,7 @@ function buildFeedbackSessionBlock(session, persona) {
     `- 숨은 필요: ${template.personalWorld?.hiddenNeed || "없음"}`,
     `- 방어 방식: ${template.personalWorld?.protectiveStrategy || "없음"}`,
     `- 후반 핵심 장벽: ${template.lateSessionTension?.coreQuestion || "없음"}`,
+    `- 이번 세션 해결 금지: ${template.lateSessionTension?.doNotResolve || "없음"}`,
     compactList(
       "경험 앵커 요약",
       (template.experienceAnchors || []).slice(0, 3).map((anchor) => `${anchor.summary || "없음"} -> ${anchor.formedBelief || "없음"}`)
@@ -2527,6 +2659,17 @@ function buildFeedbackSessionBlock(session, persona) {
     compactList(
       "사용자 말의 해석",
       (template.interpretationRules || []).slice(0, 5).map((rule) => `${rule.userMove || "사용자 발화"}: ${rule.personaHears || "없음"}`)
+    ),
+    "복음 반응 지도:",
+    ...(template.gospelReactionMap
+      ? Object.entries(template.gospelReactionMap).map(([key, value]) => `- ${key}: ${value}`)
+      : ["- 없음"]),
+    compactList(
+      "피드백용 PAS 압력/회피",
+      (template.pasMap || [])
+        .filter((entry) => ["god_love", "sin_repentance", "cross_resurrection", "faith_salvation", "closing"].includes(entry.userMove))
+        .slice(0, 5)
+        .map((entry) => `${entry.userMove}: 압력=${entry.pressure || "없음"} / 회피=${entry.avoid || "없음"}`)
     ),
     "",
     "단기 세션 한계:",
@@ -2583,6 +2726,8 @@ function goalTurnPressureFor(session = {}, messages = [], persona = {}) {
 function initialDynamicPromptFor(session, persona) {
   return [
     goalTurnPressureFor(session, [], persona),
+    "",
+    personaBoundaryHints(persona),
     "",
     "첫 응답 실행 지침:",
     "- 관계 반영 지침과 상황 반영 지침을 반드시 반영한다.",
@@ -2650,6 +2795,8 @@ function chatDynamicPromptFor(session, persona, messages) {
     "",
     conversationStateHints(messages, persona),
     "",
+    personaBoundaryHints(persona),
+    "",
     goalTurnPressureFor(session, messages, persona),
     `- 장면 유지 지침: ${settingContinuityHint(session, messages)}`,
     `- 질문 다양성 지침: ${questionVarietyHint(messages)}`,
@@ -2663,6 +2810,8 @@ function chatDynamicPromptFor(session, persona, messages) {
     "- 마지막 사용자 발화에 새로 담긴 정보, 감정, 질문에 먼저 반응한다.",
     "- 지금까지의 대화 기록에서 사용자가 이미 답한 질문을 다시 묻지 않는다.",
     "- 최근 3턴에서 사용한 말투, 질문 구조, 망설임 표현을 그대로 반복하지 않는다.",
+    "- '솔직히', '아직 모르겠어', '그 말', '뭔가', '그냥' 같은 완충 표현은 최근에 반복됐다면 이번 턴에서 다른 문장 시작과 구체 단서로 대체한다.",
+    "- 반복 억제는 단어만 바꾸는 것이 아니다. 같은 장벽을 말해야 한다면 이번에는 장면, 몸의 반응, 실제 생활 압박, 다음 질문 중 하나로 새롭게 드러낸다.",
     "- 같은 질문어를 반복하지 않는다. 특히 '어떻게'가 반복되면 이번 응답은 질문 대신 페르소나의 유보, 부담, 아직 남은 장벽을 진술한다.",
     "- 질문이 필요하면 페르소나 자신의 남은 장벽을 더 구체화하는 질문 하나만 한다.",
     "- 선택된 훈련 초점에 맞는 연습 기회를 제공하되, 사용자를 평가하거나 훈련시키는 말투를 쓰지 않는다.",
@@ -2713,6 +2862,128 @@ function feedbackInputFor(session, persona, messages) {
     "",
     "위 대화를 평가 기준과 출력 형식에 맞춰 한국어로 피드백하라."
   ].join("\n");
+}
+
+function feedbackRepairInputFor(session, persona, messages, draft, report = {}) {
+  const issues = [];
+  if (report.missingHeadings?.length) issues.push(`누락 섹션: ${report.missingHeadings.join(", ")}`);
+  if (report.tooShort) issues.push("분량이 너무 짧음");
+  if (report.tooLong) issues.push("분량이 너무 김");
+  if (report.looksTruncated) issues.push("출력이 잘렸거나 마지막 섹션이 불완전함");
+  if (!report.startsWithOneLineEval) issues.push("첫 섹션이 `## 한줄 평가`가 아님");
+  return [
+    "이전 피드백 초안은 형식 또는 길이 규칙을 어겼다. 같은 대화를 다시 평가하되, 이번에는 아래 템플릿만 정확히 출력하라.",
+    `실패 이유: ${issues.length ? issues.join(" / ") : "형식 재정렬 필요"}`,
+    "",
+    "세션 정보:",
+    buildFeedbackSessionBlock(session, persona),
+    "",
+    "전체 대화 기록:",
+    formatMessages(messages),
+    "",
+    "잘못된 초안:",
+    normalizeGeneratedText(draft),
+    "",
+    "반드시 지킬 것:",
+    "- `## 한줄 평가`로 시작한다.",
+    "- `## 잘한 점 2개`, `## 가장 고칠 점 3개`, `## 문제 발화 교정`, `## 다음 훈련 과제`를 모두 포함한다.",
+    "- 900~1200자 안팎으로 압축하고, 문제 발화는 최대 2개만 다룬다.",
+    "- 해설보다 교정이 우선이다. 각 문제 발화는 짧은 근거, 문제 1문장, 대체 문장 1개로 끝낸다.",
+    "- 필수 섹션 외 새로운 대제목을 만들지 않는다.",
+    "- 마지막 섹션까지 완결된 문장으로 끝낸다."
+  ].join("\n");
+}
+
+async function generateFeedbackWithQualityGate({
+  userId,
+  conversationId,
+  session,
+  persona,
+  messages,
+  input,
+  feedbackPromptEntry
+}) {
+  let usage = {};
+  let model = "";
+  let provider = "";
+
+  const runFeedback = async ({ eventType, modelInput, overrides = {} }) => {
+    const result = await callModelWithUsage({
+      modelType: "feedback",
+      instructions: feedbackPromptEntry.text,
+      input: modelInput,
+      langfusePrompt: feedbackPromptEntry.langfusePrompt,
+      overrides,
+      traceContext: buildPersonaTraceContext({
+        eventType,
+        userId,
+        conversationId,
+        session,
+        persona,
+        messages,
+        langfusePrompt: feedbackPromptEntry.langfusePrompt,
+        promptSource: feedbackPromptEntry.source,
+        promptVersion: feedbackPromptEntry.version,
+        prompt: { dynamicInput: modelInput, instructions: feedbackPromptEntry.text }
+      })
+    });
+    usage = mergeUsageRecords(usage, result.usage);
+    model = result.model;
+    provider = result.provider;
+    return result;
+  };
+
+  let result;
+  try {
+    result = await runFeedback({ eventType: "feedback", modelInput: input });
+  } catch (error) {
+    if (!isMaxOutputIncomplete(error)) throw error;
+    const currentMax = Number(modelSettingsFor("feedback").maxOutputTokens || defaultSettings.ai.feedback.maxOutputTokens || 2600);
+    result = await runFeedback({
+      eventType: "feedback_retry",
+      modelInput: input,
+      overrides: { maxOutputTokens: Math.min(64000, Math.max(5200, currentMax * 2)) }
+    });
+  }
+
+  let text = normalizeGeneratedText(result.text);
+  let report = feedbackStructureReport(text);
+
+  if (report.needsRepair) {
+    void recordAppLog({
+      level: "warn",
+      eventType: "feedback_shape_repair_requested",
+      message: "Feedback output missed required structure or target length; requesting compact rewrite.",
+      userId,
+      conversationId,
+      context: report
+    });
+
+    const currentMax = Number(modelSettingsFor("feedback").maxOutputTokens || defaultSettings.ai.feedback.maxOutputTokens || 2600);
+    const repaired = await runFeedback({
+      eventType: "feedback_repair",
+      modelInput: feedbackRepairInputFor(session, persona, messages, text, report),
+      overrides: {
+        maxOutputTokens: Math.max(1400, Math.min(2200, currentMax)),
+        thinkingType: "disabled",
+        thinkingBudgetTokens: 0
+      }
+    });
+    text = normalizeGeneratedText(repaired.text);
+    report = feedbackStructureReport(text);
+    if (report.needsRepair) {
+      void recordAppLog({
+        level: "warn",
+        eventType: "feedback_shape_repair_incomplete",
+        message: "Feedback rewrite still failed one or more structure checks.",
+        userId,
+        conversationId,
+        context: report
+      });
+    }
+  }
+
+  return { text, usage, model, provider, report };
 }
 
 function visibleSceneFor(session = {}, persona = {}) {
@@ -4049,8 +4320,19 @@ async function handleApi(req, res, url) {
         return;
       }
       if (conversation?.status === "finished" && conversation.feedbackText) {
-        json(res, 200, { text: conversation.feedbackText, alreadyFinished: true, limits: publicUsageLimits(user) });
-        return;
+        const existingFeedbackReport = feedbackStructureReport(conversation.feedbackText);
+        if (!existingFeedbackReport.needsRepair) {
+          json(res, 200, { text: conversation.feedbackText, alreadyFinished: true, limits: publicUsageLimits(user) });
+          return;
+        }
+        void recordAppLog({
+          level: "warn",
+          eventType: "feedback_existing_shape_repair_requested",
+          message: "Existing stored feedback failed structure checks and will be regenerated.",
+          userId: user.id,
+          conversationId: conversation.id,
+          context: existingFeedbackReport
+        });
       }
       const clientFeedbackMessages = sanitizeConversationMessages(body.messages);
       const serverMessages = sanitizeConversationMessages(conversation.messages);
@@ -4071,59 +4353,37 @@ async function handleApi(req, res, url) {
           context: { path, method: req.method, serverMessages: serverMessages.length, clientMessages: clientFeedbackMessages.length }
         });
       }
+      const collapsedFeedback = collapseAdjacentDuplicateMessages(feedbackMessages);
+      const analysisMessages = collapsedFeedback.messages;
+      if (collapsedFeedback.removed > 0) {
+        void recordAppLog({
+          level: "warn",
+          eventType: "feedback_duplicate_messages_collapsed",
+          message: "Collapsed adjacent duplicate messages before feedback generation.",
+          userId: user.id,
+          conversationId: conversation.id,
+          context: { removed: collapsedFeedback.removed, originalCount: feedbackMessages.length, analysisCount: analysisMessages.length }
+        });
+      }
       conversation.messages = feedbackMessages;
       conversation.updatedAt = new Date().toISOString();
       await saveDb();
-      const input = feedbackInputFor(session, persona, feedbackMessages);
+      const input = feedbackInputFor(session, persona, analysisMessages);
       const feedbackPromptEntry = await feedbackSystemPrompt();
       let text = "";
       let usage = {};
       let model = "";
       let provider = "";
       try {
-        let result;
-        try {
-          result = await callModelWithUsage({
-            modelType: "feedback",
-            instructions: feedbackPromptEntry.text,
-            input,
-            langfusePrompt: feedbackPromptEntry.langfusePrompt,
-            traceContext: buildPersonaTraceContext({
-              eventType: "feedback",
-              userId: user.id,
-              conversationId: conversation.id,
-              session,
-              persona,
-              messages: feedbackMessages,
-              langfusePrompt: feedbackPromptEntry.langfusePrompt,
-              promptSource: feedbackPromptEntry.source,
-              promptVersion: feedbackPromptEntry.version,
-              prompt: { dynamicInput: input, instructions: feedbackPromptEntry.text }
-            })
-          });
-        } catch (error) {
-          if (!isMaxOutputIncomplete(error)) throw error;
-          const currentMax = Number(modelSettingsFor("feedback").maxOutputTokens || defaultSettings.ai.feedback.maxOutputTokens || 2600);
-          result = await callModelWithUsage({
-            modelType: "feedback",
-            instructions: feedbackPromptEntry.text,
-            input,
-            langfusePrompt: feedbackPromptEntry.langfusePrompt,
-            overrides: { maxOutputTokens: Math.min(64000, Math.max(5200, currentMax * 2)) },
-            traceContext: buildPersonaTraceContext({
-              eventType: "feedback_retry",
-              userId: user.id,
-              conversationId: conversation.id,
-              session,
-              persona,
-              messages: feedbackMessages,
-              langfusePrompt: feedbackPromptEntry.langfusePrompt,
-              promptSource: feedbackPromptEntry.source,
-              promptVersion: feedbackPromptEntry.version,
-              prompt: { dynamicInput: input, instructions: feedbackPromptEntry.text }
-            })
-          });
-        }
+        const result = await generateFeedbackWithQualityGate({
+          userId: user.id,
+          conversationId: conversation.id,
+          session,
+          persona,
+          messages: analysisMessages,
+          input,
+          feedbackPromptEntry
+        });
         text = result.text;
         usage = result.usage;
         model = result.model;
