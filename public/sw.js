@@ -1,4 +1,4 @@
-const CACHE_NAME = "gospel-simulator-shell-v2";
+const CACHE_NAME = "gospel-simulator-shell-v3";
 const APP_SHELL = [
   "/",
   "/offline.html",

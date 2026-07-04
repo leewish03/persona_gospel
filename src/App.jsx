@@ -9,6 +9,8 @@ import {
   Home,
   Settings,
   Shield,
+  Share,
+  Smartphone,
   Trash2
 } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, XAxis } from "recharts";
@@ -57,6 +59,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useAppController } from "@/hooks/useAppController";
+import { usePwaInstallPrompt } from "@/hooks/usePwaInstallPrompt";
 import {
   goalText,
   personaImages,
@@ -101,6 +104,10 @@ function AppShell({ state, actions, children }) {
   const feedbackReady = state.currentScreen !== "feedback" || (Boolean(state.latestFeedbackText) && !state.feedbackError);
   const headerTrailingChat = state.currentScreen === "chat" && state.sessionStarted;
   const showBottom = !isHome && !actionless && !(state.currentScreen === "chat" && state.sessionStarted) && feedbackReady;
+  const pwaInstall = usePwaInstallPrompt({
+    isInActiveChat: state.currentScreen === "chat" && state.sessionStarted,
+    trainingFinishedSignal: state.currentScreen === "feedback" && state.latestFeedbackText ? state.latestFeedbackText : ""
+  });
 
   useEffect(() => {
     const root = document.documentElement;
@@ -201,7 +208,52 @@ function AppShell({ state, actions, children }) {
         {showTabs ? <TabBar state={state} actions={actions} /> : null}
       </div>
       <PendingActionDialog state={state} actions={actions} />
+      <PwaInstallPrompt prompt={pwaInstall} />
     </>
+  );
+}
+
+function PwaInstallPrompt({ prompt }) {
+  const title = prompt.isIosSafari ? "홈 화면에 앱을 추가하세요" : "앱처럼 설치해서 사용하세요";
+  const description = prompt.isIosSafari
+    ? "설치하면 브라우저를 열지 않고 바로 훈련을 이어갈 수 있습니다."
+    : "설치하면 홈 화면에서 바로 열고, 더 넓은 앱 화면으로 훈련할 수 있습니다.";
+  return (
+    <Drawer open={prompt.visible} onOpenChange={(open) => { if (!open) prompt.dismiss(); }}>
+      <DrawerContent className="mx-auto max-w-[480px] rounded-t-3xl">
+        <DrawerHeader className="text-left">
+          <div className="mb-2 flex size-11 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
+            <Smartphone className="size-5" />
+          </div>
+          <DrawerTitle className="text-xl font-black">{title}</DrawerTitle>
+          <DrawerDescription>{description}</DrawerDescription>
+        </DrawerHeader>
+        <div className="grid gap-3 px-4 text-sm text-muted-foreground">
+          {prompt.isIosSafari ? (
+            <div className="grid gap-2 rounded-2xl border bg-card p-3">
+              <p className="flex items-center gap-2 font-semibold text-foreground"><Share className="size-4" /> iPhone 설치 방법</p>
+              <ol className="grid gap-1 pl-5 [list-style:decimal]">
+                <li>Safari 하단의 공유 버튼을 누릅니다.</li>
+                <li>메뉴에서 홈 화면에 추가를 선택합니다.</li>
+                <li>추가를 누르면 홈 화면에서 바로 열 수 있습니다.</li>
+              </ol>
+            </div>
+          ) : (
+            <p className="rounded-2xl border bg-card p-3">설치 후에도 로그인과 훈련 기록은 기존 계정 그대로 이어집니다.</p>
+          )}
+        </div>
+        <DrawerFooter className="gap-2">
+          {prompt.canPromptInstall ? (
+            <Button type="button" onClick={() => void prompt.promptInstall()}>
+              설치하기
+            </Button>
+          ) : null}
+          <Button type="button" variant={prompt.canPromptInstall ? "outline" : "secondary"} onClick={prompt.dismiss}>
+            나중에
+          </Button>
+        </DrawerFooter>
+      </DrawerContent>
+    </Drawer>
   );
 }
 

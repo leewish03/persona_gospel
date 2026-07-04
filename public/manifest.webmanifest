@@ -2,6 +2,7 @@
   "name": "복음 대화 훈련소",
   "short_name": "복음 훈련",
   "description": "복음 전도 대화를 AI 페르소나와 먼저 연습하고 피드백 리포트를 확인하세요.",
+  "id": "/",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
