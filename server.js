@@ -237,6 +237,9 @@ async function loadDb() {
 }
 
 async function saveDb() {
+  for (const conversation of db.conversations) {
+    for (const message of conversation.messages || []) message.id ||= randomUUID();
+  }
   await writeFile(dbPath, JSON.stringify(db, null, 2), "utf8");
   if (supabaseUrl && supabaseServiceRoleKey) {
     try {
@@ -744,7 +747,7 @@ async function loadSupabaseDb() {
   const messagesByConversation = new Map();
   for (const row of messages || []) {
     const list = messagesByConversation.get(row.conversation_id) || [];
-    list.push({ role: row.role, content: row.content });
+    list.push({ id: row.id, role: row.role, content: row.content });
     messagesByConversation.set(row.conversation_id, list);
   }
 
@@ -784,20 +787,21 @@ async function saveSupabaseDb() {
     body: [{ key: "operations", value: db.settings, updated_at: new Date().toISOString() }]
   });
 
-  for (const conversation of db.conversations) {
-    if (!conversation.messages?.length) continue;
-    await supabaseRequest(`conversation_messages?conversation_id=eq.${encodeURIComponent(conversation.id)}`, { signal, method: "DELETE" });
-    await supabaseRequest("conversation_messages", {
+  const messages = db.conversations.flatMap((conversation) =>
+    (conversation.messages || []).map((message, index) => ({
+      id: message.id,
+      conversation_id: conversation.id,
+      role: message.role,
+      content: message.content,
+      sort_order: index,
+      created_at: conversation.createdAt
+    }))
+  );
+  if (messages.length) {
+    await supabaseRequest("conversation_messages?on_conflict=id", {
       signal,
       method: "POST",
-      body: conversation.messages.map((message, index) => ({
-        id: randomUUID(),
-        conversation_id: conversation.id,
-        role: message.role,
-        content: message.content,
-        sort_order: index,
-        created_at: conversation.createdAt
-      }))
+      body: messages
     });
   }
 }
@@ -1259,7 +1263,7 @@ function publicConversation(conversation, { includeMessages = false, includeFeed
     finishedAt: conversation.finishedAt
   };
   if (includeHidden) payload.hiddenByUserAt = conversation.hiddenByUserAt || "";
-  if (includeMessages) payload.messages = conversation.messages || [];
+  if (includeMessages) payload.messages = (conversation.messages || []).map(({ role, content }) => ({ role, content }));
   if (includeFeedback) payload.feedbackText = conversation.feedbackText || "";
   return payload;
 }
