@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { refuseLegacyPaidQa } from '../lib/qa-budget.js';
+refuseLegacyPaidQa();
 /**
  * 6명 페르소나 × (/api/start + 선택적 /api/chat 1턴) Claude 연동 스모크.
  *

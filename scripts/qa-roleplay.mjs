@@ -1,3 +1,5 @@
+import { refuseLegacyPaidQa } from '../lib/qa-budget.js';
+refuseLegacyPaidQa();
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";

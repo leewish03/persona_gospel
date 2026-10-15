@@ -1,3 +1,5 @@
+import { refuseLegacyPaidQa } from '../lib/qa-budget.js';
+refuseLegacyPaidQa();
 /**
  * 로컬 서버(기본 http://127.0.0.1:4173)에서 주요 화면을 순회하며 스크린샷을 남깁니다.
  * 실행: node scripts/qa-full-walkthrough.mjs
@@ -5,7 +7,7 @@
 import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { chromium } from "playwright";
+const { chromium } = await import("playwright");
 
 const root = dirname(fileURLToPath(import.meta.url));
 const outDir = join(root, "..", "docs", "qa-screenshots", "manual-session");
@@ -49,7 +51,7 @@ async function main() {
     await shot(page, "01-home");
     log.push(`01-home: ${join(outDir, "01-home.png")}`);
 
-    await page.getByRole("button", { name: "로그인하고 시작" }).click();
+    await page.getByRole("button", { name: "로그인하고 첫 연습하기" }).click();
     await page.waitForTimeout(300);
     await shot(page, "02-login");
     log.push(`02-login: ${join(outDir, "02-login.png")}`);
@@ -69,11 +71,6 @@ async function main() {
     const saveBtn = page.getByRole("button", { name: "저장하고 시작" });
     if ((await saveBtn.count()) > 0) {
       await page.locator("#profile-name").fill("QA 테스터");
-      await page.locator("#profile-age").fill("30");
-      await page.locator("#profile-gender").click();
-      await page.getByRole("option", { name: "남성" }).click();
-      await page.locator("#profile-church").fill("QA 교회");
-      await page.locator("#profile-use").fill("개인 전도 훈련");
       await shot(page, "04-profile-filled");
       log.push(`04-profile-filled: ${join(outDir, "04-profile-filled.png")}`);
       await saveBtn.click();
@@ -83,7 +80,7 @@ async function main() {
     await shot(page, "05-after-profile");
     log.push(`05-after-profile: ${join(outDir, "05-after-profile.png")}`);
 
-    await page.locator(".text-white").getByRole("button", { name: "훈련 시작" }).click();
+    await page.getByRole("button", { name: "상대와 상황 직접 고르기" }).click();
     await page.getByRole("heading", { name: "페르소나 선택" }).waitFor({ state: "visible", timeout: 15_000 });
     await shot(page, "06-persona");
     log.push(`06-persona: ${join(outDir, "06-persona.png")}`);

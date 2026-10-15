@@ -138,8 +138,14 @@ async function main() {
   await expectOk("/api/profile", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ profile: { name: "QA", age: "30", gender: "테스트", church: "테스트 교회", useCase: "출시 QA" } })
+    body: JSON.stringify({ profile: { name: "QA" } })
   });
+  const savedProfile = await (await expectOk("/api/me")).json();
+  if (!savedProfile.user?.profileComplete || savedProfile.user.profile.name !== "QA") throw new Error("Nickname-only onboarding did not persist");
+  const invalidProfile = await request("/api/profile", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ profile: { name: " " } })
+  });
+  if (invalidProfile.status !== 400) throw new Error("Blank nickname must be rejected");
   await expectOk("/api/app-feedback", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

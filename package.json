@@ -7,6 +7,8 @@
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
     "check": "node --check server.js && vite build",
+    "test": "node --test lib/feedback-evidence.test.js lib/qa-budget.test.js lib/release-quality.test.js lib/model-adapters.test.js src/lib/pwaInstallPrompt.test.js scripts/purposeful-checkpoints.test.mjs",
+    "qa:persona:budget": "node scripts/qa-persona-budget.mjs",
     "smoke": "node scripts/smoke-api.mjs",
     "qa:launch": "node scripts/qa-launch-readiness.mjs",
     "qa:launch:local": "node scripts/qa-launch-readiness.mjs",

@@ -39,7 +39,7 @@ function getIsIosSafari() {
   });
 }
 
-export function usePwaInstallPrompt({ isInActiveChat = false, trainingFinishedSignal = "" } = {}) {
+export function usePwaInstallPrompt({ isInActiveChat = false, isReadingFeedback = false, trainingFinishedSignal = "" } = {}) {
   const [installEvent, setInstallEvent] = useState(null);
   const [isInstalled, setIsInstalled] = useState(getIsInstalled);
   const [state, setState] = useState(getStoredState);
@@ -85,13 +85,14 @@ export function usePwaInstallPrompt({ isInActiveChat = false, trainingFinishedSi
       isInstalled,
       isPromptSupported: Boolean(installEvent),
       isIosSafari,
-      isInActiveChat
+      isInActiveChat,
+      isReadingFeedback
     });
     setDecisionReason(decision.reason);
     if (!decision.shouldShow || visible) return;
     setVisible(true);
     updateState((current) => markPwaInstallPromptShown(current, Date.now(), decision.reason));
-  }, [installEvent, isInActiveChat, isInstalled, isIosSafari, state, updateState, visible]);
+  }, [installEvent, isInActiveChat, isReadingFeedback, isInstalled, isIosSafari, state, updateState, visible]);
 
   const dismiss = useCallback(() => {
     setVisible(false);

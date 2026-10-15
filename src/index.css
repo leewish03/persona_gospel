@@ -41,7 +41,7 @@
 }
 
 @theme inline {
-  --font-sans: Inter, Pretendard, "Noto Sans KR", system-ui, sans-serif;
+  --font-sans: Pretendard, "Noto Sans KR", system-ui, sans-serif;
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -69,6 +69,26 @@
   --color-chart-3: var(--chart-3);
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
+}
+
+.home-content h1,
+.home-content h2 {
+  word-break: keep-all;
+  text-wrap: balance;
+}
+
+.home-content p {
+  overflow-wrap: anywhere;
+}
+
+summary:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-pulse { animation: none; }
 }
 
 @layer base {

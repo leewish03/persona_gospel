@@ -70,6 +70,8 @@ import {
 } from "@/lib/constants";
 import { formatCount, formatDate, formatKrw, formatPercent, markdownToHtml, percentOf, sessionLabels, usageEventLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { trainingGuides } from "@/lib/trainingGuides";
+import { feedbackTakeaway } from "@/lib/feedbackTakeaway";
 
 function SelectControl({ id, label, value, onChange, placeholder, options, disabled }) {
   return (
@@ -106,6 +108,7 @@ function AppShell({ state, actions, children }) {
   const showBottom = !isHome && !actionless && !(state.currentScreen === "chat" && state.sessionStarted) && feedbackReady;
   const pwaInstall = usePwaInstallPrompt({
     isInActiveChat: state.currentScreen === "chat" && state.sessionStarted,
+    isReadingFeedback: state.currentScreen === "feedback",
     trainingFinishedSignal: state.currentScreen === "feedback" && state.latestFeedbackText ? state.latestFeedbackText : ""
   });
 
@@ -143,7 +146,7 @@ function AppShell({ state, actions, children }) {
         {isHome ? (
           <main
             className={cn(
-              "flex h-full min-h-0 flex-col overflow-hidden",
+              "flex h-full min-h-0 flex-col overflow-y-auto",
               showTabs && "pb-[calc(4.25rem+env(safe-area-inset-bottom))]"
             )}
           >
@@ -193,12 +196,12 @@ function AppShell({ state, actions, children }) {
             {state.currentScreen === "chat" ? <ChatComposer state={state} actions={actions} /> : null}
             {showBottom ? (
               <footer className={cn("grid shrink-0 gap-2 border-t bg-card/95 p-4 shadow-[0_-12px_32px_rgba(23,33,31,0.08)]", meta.secondary && "grid-cols-2")}>
-                <Button disabled={state.isBusy || (state.currentScreen === "review" && !state.reviewConfirmed && false)} onClick={actions.handlePrimaryAction}>
-                  {primaryLabel}
+                <Button className="min-h-11" disabled={state.isBusy} onClick={actions.handlePrimaryAction}>
+                  {state.isBusy ? "처리하고 있어요…" : primaryLabel}
                 </Button>
                 {meta.secondary ? (
                   <Button variant="secondary" disabled={state.isBusy} onClick={actions.handleSecondaryAction}>
-                    {meta.secondary}
+                    {state.currentScreen === "feedback" ? "이 과제로 다시 연습" : meta.secondary}
                   </Button>
                 ) : null}
               </footer>
@@ -350,31 +353,42 @@ function TabBar({ state, actions }) {
 }
 
 function HomeScreen({ state, actions }) {
-  const cta = !state.hasUser ? "로그인하고 시작" : state.profileComplete ? "훈련 시작" : "프로필 입력";
-  const tabBarReserved = state.hasUser && state.profileComplete;
+  const ready = state.hasUser && state.profileComplete;
   return (
-    <div className="relative h-full overflow-hidden bg-stone-950">
-      <img className="absolute inset-0 size-full select-none object-cover object-center" draggable="false" src="/assets/home-cover.jpg" alt="카페에서 진지하게 대화하는 두 사람" />
-      <div className="absolute inset-0 bg-gradient-to-b from-black/25 via-black/20 to-black/75" />
-      <div className="absolute inset-x-0 top-0 z-10 px-5 pt-[max(1rem,env(safe-area-inset-top))] text-white">
-        <p className="text-xs font-black uppercase tracking-wide text-white/80">SOLOMON LAB</p>
-        <h1 className="mt-1 text-lg font-black">복음 대화 훈련소</h1>
-      </div>
-      <div
-        className={cn(
-          "absolute inset-x-0 bottom-0 z-10 grid gap-4 p-5 text-white",
-          tabBarReserved ? "pb-5" : "pb-[calc(1.25rem+env(safe-area-inset-bottom))]"
-        )}
-      >
+    <div className="home-content grid gap-6 px-5 pt-6 pb-8">
+      <header className="flex items-center justify-between gap-3">
+        <p className="text-sm font-bold tracking-tight">복음 대화 훈련소</p>
+        <span className="text-xs font-medium text-muted-foreground">SOLOMON LAB</span>
+      </header>
+      <section className="grid gap-4">
         <div>
-          <h2 className="text-[clamp(1.65rem,8vw,2.6rem)] font-black leading-tight">복음 전도 대화,<br />AI와 먼저 연습해보세요</h2>
-          <p className="mt-3 max-w-sm text-sm leading-6 text-white/85">실제 전도 상황을 AI 페르소나와 연습하고, 대화 후 피드백 리포트로 더 나은 질문과 복음 전달 방식을 점검하세요.</p>
-          {state.hasUser ? <p className="mt-3 text-xs font-semibold text-white/70">{state.auth.user.profile?.name || state.auth.user.displayName}님, 이어서 훈련할 수 있습니다.</p> : null}
+          <p className="mb-3 text-sm font-semibold text-primary">잘 말하기보다, 먼저 듣는 연습</p>
+          <h1 className="text-[2rem] font-bold leading-tight tracking-tight">마음은 있는데,<br />첫마디가 어렵다면.</h1>
+          <p className="mt-4 text-base leading-relaxed text-muted-foreground">정답을 말해야 하는 시험이 아니에요. AI 대화 상대와 한 번 연습하고, 다음에 건넬 말을 찾아보세요.</p>
         </div>
-        <Button className="h-12 rounded-full bg-primary text-base font-black shadow-2xl hover:bg-primary/90" onClick={actions.handlePrimaryAction}>
-          {cta}
+        <img className="aspect-[16/9] w-full rounded-2xl object-cover object-[center_20%]" width="640" height="360" fetchPriority="high" src="/assets/home-cover.jpg" alt="카페에서 서로의 이야기를 듣는 두 사람" />
+      </section>
+      {state.errors.global ? <Alert variant="destructive"><AlertCircle /><AlertTitle>연결을 확인해 주세요</AlertTitle><AlertDescription>{state.errors.global}<Button variant="outline" className="mt-3" onClick={() => window.location.reload()}>다시 불러오기</Button></AlertDescription></Alert> : null}
+      <section className="grid gap-4" aria-labelledby="first-practice-title">
+        <div className="flex items-center gap-2 text-sm"><span className="font-semibold text-primary">처음이라면</span><span className="text-muted-foreground">짧게 5~10분 · 경청 연습</span></div>
+        <div>
+          <h2 id="first-practice-title" className="text-xl font-bold">취업이 막막한 친구의 이야기 듣기</h2>
+          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">카페에서 만난 시현에게 조언을 서두르지 않고, 가장 마음에 걸리는 것 하나를 물어보세요.</p>
+        </div>
+        <Button className="h-12 w-full text-base font-semibold" disabled={state.isBusy || Boolean(state.errors.global) || !state.personas.length} onClick={ready ? actions.prepareBeginnerSession : actions.handlePrimaryAction}>
+          {ready ? "추천 훈련 살펴보기" : state.hasUser ? "별명 정하고 시작하기" : "로그인하고 첫 연습하기"}
         </Button>
-      </div>
+        {ready ? <Button variant="outline" className="min-h-11" onClick={actions.handlePrimaryAction}>상대와 상황 직접 고르기</Button> : null}
+      </section>
+      <ol className="grid gap-3 border-t pt-5 text-sm leading-relaxed">
+        <li><span className="mr-3 font-semibold text-primary">01</span>하나의 목표로 짧게 대화해요.</li>
+        <li><span className="mr-3 font-semibold text-primary">02</span>막히면 도움말을 열어 생각을 정리해요.</li>
+        <li><span className="mr-3 font-semibold text-primary">03</span>내가 한 말을 돌아보고 다시 연습해요.</li>
+      </ol>
+      <footer className="grid gap-3 text-sm leading-relaxed text-muted-foreground">
+        <p>상대는 가상의 AI 인물이에요. 실제 사람의 마음이나 신앙 반응을 예측하는 도구는 아닙니다.</p>
+        <div className="flex gap-4"><a className="underline underline-offset-4" href="/privacy.html">개인정보 처리방침</a><a className="underline underline-offset-4" href="/terms.html">이용약관</a></div>
+      </footer>
     </div>
   );
 }
@@ -384,11 +398,12 @@ function LoginScreen({ state, actions }) {
     <Card>
       <CardHeader>
         <CardTitle>로그인</CardTitle>
-        <CardDescription>훈련 기록과 피드백을 계정에 저장하려면 먼저 로그인해야 합니다.</CardDescription>
+        <CardDescription>연습한 대화와 피드백을 저장하고 다음에 이어서 볼 수 있어요.</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-3">
-        <Button asChild variant="outline"><a href="/auth/google">Google로 계속하기</a></Button>
-        <Button asChild variant="secondary"><a href="/auth/kakao">카카오로 계속하기</a></Button>
+        {state.auth.googleEnabled ? <Button asChild variant="outline"><a href="/auth/google">Google로 계속하기</a></Button> : null}
+        {state.auth.kakaoEnabled ? <Button asChild variant="secondary"><a href="/auth/kakao">카카오로 계속하기</a></Button> : null}
+        {!state.auth.googleEnabled && !state.auth.kakaoEnabled && !state.auth.devLoginEnabled ? <Alert><AlertTitle>로그인을 준비하고 있어요</AlertTitle><AlertDescription>현재 이용할 수 있는 로그인 방법이 없습니다. 잠시 후 다시 방문해 주세요.</AlertDescription></Alert> : null}
         {state.auth.devLoginEnabled ? <Button onClick={actions.devLogin}>개발용 로그인</Button> : null}
         {state.errors.auth ? <Alert variant="destructive"><AlertCircle /><AlertTitle>로그인 실패</AlertTitle><AlertDescription>{state.errors.auth}</AlertDescription></Alert> : null}
       </CardContent>
@@ -397,19 +412,24 @@ function LoginScreen({ state, actions }) {
 }
 
 function ProfileScreen({ state, actions }) {
-  const update = (patch) => actions.setProfileForm((value) => ({ ...value, ...patch }));
+  const update = (patch) => {
+    actions.setProfileForm((value) => ({ ...value, ...patch }));
+    actions.setErrors((value) => ({ ...value, profile: "" }));
+  };
   return (
     <Card>
       <CardHeader>
-        <CardTitle>기본 정보 입력</CardTitle>
-        <CardDescription>무분별한 사용을 줄이고 개인 훈련 기록을 구분하기 위한 최소 정보입니다.</CardDescription>
+        <CardTitle>어떻게 불러드릴까요?</CardTitle>
+        <CardDescription>이름이나 별명만 정하면 시작할 수 있어요. 나머지 정보는 선택입니다.</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
-        <div className="grid gap-2"><Label htmlFor="profile-name">이름</Label><Input id="profile-name" value={state.profileForm.name} onChange={(event) => update({ name: event.target.value })} /></div>
+        <div className="grid gap-2"><Label htmlFor="profile-name">이름 또는 별명 (필수)</Label><Input id="profile-name" maxLength={40} autoComplete="nickname" value={state.profileForm.name} onChange={(event) => update({ name: event.target.value })} /></div>
+        <details className="grid gap-4"><summary className="cursor-pointer py-2 text-sm text-muted-foreground">선택 정보 입력</summary><div className="grid gap-4 pt-4">
         <div className="grid gap-2"><Label htmlFor="profile-age">나이</Label><Input id="profile-age" type="number" min="10" max="99" value={state.profileForm.age} onChange={(event) => update({ age: event.target.value })} /></div>
         <SelectControl id="profile-gender" label="성별" value={state.profileForm.gender} onChange={(gender) => update({ gender })} placeholder="성별 선택" options={[{ value: "남성", label: "남성" }, { value: "여성", label: "여성" }]} />
         <div className="grid gap-2"><Label htmlFor="profile-church">소속 교회</Label><Input id="profile-church" value={state.profileForm.church} onChange={(event) => update({ church: event.target.value })} /></div>
         <div className="grid gap-2"><Label htmlFor="profile-use">사용 용도</Label><Input id="profile-use" value={state.profileForm.useCase} onChange={(event) => update({ useCase: event.target.value })} placeholder="CBF 활동 / 청년 활동 / 개인 전도 훈련" /></div>
+        </div></details>
         {state.errors.profile ? <Alert variant="destructive"><AlertCircle /><AlertTitle>입력 확인</AlertTitle><AlertDescription>{state.errors.profile}</AlertDescription></Alert> : null}
       </CardContent>
     </Card>
@@ -419,11 +439,13 @@ function ProfileScreen({ state, actions }) {
 function PersonaScreen({ state, actions }) {
   return (
     <div className="grid gap-3">
+      <p className="text-sm leading-relaxed text-muted-foreground">각자 다른 고민과 생각을 가진 가상의 대화 상대예요. 한 사람의 이야기를 천천히 들어보세요.</p>
       {state.personas.map((persona) => (
         <button
           key={persona.id}
           type="button"
-          className={cn("flex items-center gap-3 rounded-2xl border bg-card p-3 text-left shadow-sm transition", state.selectedPersonaId === persona.id && "border-primary ring-2 ring-primary/20")}
+          aria-pressed={state.selectedPersonaId === persona.id}
+          className={cn("flex items-center gap-3 rounded-2xl border bg-card p-4 text-left transition focus-visible:outline-2 focus-visible:outline-ring", state.selectedPersonaId === persona.id && "bg-secondary")}
           onClick={() => actions.setSelectedPersonaId(persona.id)}
         >
           <Avatar className="size-14 rounded-2xl">
@@ -434,7 +456,7 @@ function PersonaScreen({ state, actions }) {
             <strong className="block truncate">{persona.name}</strong>
             <span className="block text-sm text-muted-foreground">{persona.title}</span>
           </span>
-          {state.selectedPersonaId === persona.id ? <Badge className="ml-auto">선택</Badge> : null}
+          {state.selectedPersonaId === persona.id ? <CheckCircle2 className="ml-auto size-5 shrink-0 text-primary" aria-label="선택됨" /> : null}
         </button>
       ))}
     </div>
@@ -456,6 +478,7 @@ function ContextScreen({ state, actions }) {
           <SelectControl id="relationship" label="관계" value={state.contextForm.relationship} onChange={(relationship) => update({ relationship })} placeholder="관계 선택" options={Object.entries(relationshipText).map(([value, label]) => ({ value, label }))} />
           <SelectControl id="setting" label="상황" value={state.contextForm.setting} onChange={(setting) => update({ setting })} placeholder="상황 선택" options={Object.entries(settingText).map(([value, label]) => ({ value, label }))} />
           <SelectControl id="goal" label="훈련 초점" value={state.contextForm.goal} onChange={(goal) => update({ goal })} placeholder="훈련 초점 선택" options={Object.entries(goalText).map(([value, label]) => ({ value, label }))} />
+          <TrainingGuide goal={state.contextForm.goal} />
           {state.errors.context ? <Alert variant="destructive"><AlertCircle /><AlertTitle>{contextErrorTitle}</AlertTitle><AlertDescription>{state.errors.context}</AlertDescription></Alert> : null}
         </CardContent>
       </Card>
@@ -472,7 +495,7 @@ function ReviewScreen({ state }) {
       <Card>
         <CardHeader>
           <CardTitle>선택한 훈련</CardTitle>
-          <CardDescription>아래 내용을 확인하고 한 번 더 누르면 시작합니다.</CardDescription>
+          <CardDescription>설정을 확인한 뒤 시작하세요. 상대를 설득하는 것보다 오늘의 연습 목표 하나에 집중해 보세요.</CardDescription>
           <CardAction>{state.reviewConfirmed ? <Badge><CheckCircle2 data-icon="inline-start" />확인됨</Badge> : <Badge variant="outline">확인 필요</Badge>}</CardAction>
         </CardHeader>
         <CardContent className="grid gap-3 text-sm">
@@ -480,10 +503,11 @@ function ReviewScreen({ state }) {
           <p><b>관계</b> {labels.relationship}</p>
           <p><b>상황</b> {labels.setting}</p>
           <p><b>훈련 초점</b> {labels.goal}</p>
+          <TrainingGuide focus={state.practiceFocus} goal={state.currentSession.goal} />
         </CardContent>
       </Card>
       <Card>
-        <img className="aspect-square w-full rounded-t-xl object-cover" src={personaImages[persona.id]} alt={`${persona.name} 프로필`} />
+        <img className="aspect-[16/9] w-full rounded-t-xl object-cover" src={personaImages[persona.id]} alt={`${persona.name} 프로필`} />
         <CardHeader>
           <CardTitle>{persona.name}</CardTitle>
           <CardDescription>{persona.shortDescription}</CardDescription>
@@ -507,6 +531,13 @@ function InfoList({ title, items = [] }) {
       </ul>
     </div>
   );
+}
+
+function TrainingGuide({ goal, focus = "", collapsible = false }) {
+  const guide = trainingGuides[goal];
+  if (!guide && !focus) return null;
+  const content = focus ? <div className="grid gap-2 break-keep [overflow-wrap:anywhere] text-sm leading-relaxed"><p className="font-semibold">이번에 연습할 과제</p><p>{focus}</p></div> : <div className="grid gap-2 break-keep [overflow-wrap:anywhere] text-sm leading-relaxed"><p className="font-semibold">{guide.title}</p><p className="text-muted-foreground">{guide.task}</p><p>예를 들면, “{guide.question}”</p><p className="text-xs text-muted-foreground">예시를 그대로 보내기보다 지금 상대가 한 말에 맞춰 바꿔보세요.</p></div>;
+  return collapsible ? <details className="border-t bg-background px-4 py-3"><summary className="cursor-pointer text-sm font-semibold text-primary">말이 막힐 때 · 연습 도움말</summary><div className="pt-3">{content}</div></details> : <aside className="border-t pt-3" aria-label="이번 연습 목표">{content}</aside>;
 }
 
 function ChatScreen({ state }) {
@@ -557,7 +588,7 @@ function MessageBubble({ message, persona, typing }) {
         </Avatar>
       ) : null}
       {!isSystem ? <span className="px-1 text-xs font-black text-muted-foreground">{isAssistant ? persona?.name : "나"}</span> : null}
-      <div className={cn("break-words whitespace-pre-wrap rounded-2xl bg-background px-3 py-2 text-sm leading-6 shadow-sm", message.role === "user" && "rounded-br-md bg-yellow-300 text-stone-950", isAssistant && "rounded-bl-md", isSystem && "bg-amber-50 text-amber-900")}>
+      <div className={cn("break-words whitespace-pre-wrap rounded-2xl bg-background px-3 py-2 text-sm leading-6 shadow-sm", message.role === "user" && "rounded-br-md bg-secondary text-secondary-foreground", isAssistant && "rounded-bl-md", isSystem && "bg-muted text-muted-foreground")}>
         {typing ? <span className="animate-pulse">{message.content}</span> : message.content}
       </div>
     </article>
@@ -569,18 +600,20 @@ function ChatComposer({ state, actions }) {
   const labels = sessionLabels(state.currentSession, state.personas);
   const goalHint = labels.goal?.trim();
   const canSend = draft.trim() && !state.isBusy && state.sessionStarted;
-  const submit = (event) => {
+  const submit = async (event) => {
     event.preventDefault();
     if (!canSend) return;
-    void actions.submitMessage(draft);
-    setDraft("");
+    if (await actions.submitMessage(draft)) setDraft("");
   };
   return (
+    <div className="shrink-0">
+    <TrainingGuide focus={state.practiceFocus} goal={state.currentSession.goal} collapsible />
     <form
       className="flex shrink-0 items-stretch gap-3 border-t bg-card/95 px-3 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] shadow-[0_-12px_32px_rgba(23,33,31,0.08)]"
       onSubmit={submit}
     >
       <Textarea
+        aria-label="상대에게 건넬 말"
         value={draft}
         disabled={state.isBusy || !state.sessionStarted}
         placeholder={goalHint || "상대에게 건넬 말"}
@@ -588,12 +621,11 @@ function ChatComposer({ state, actions }) {
         rows={1}
         className="min-h-11 max-h-40 flex-1 resize-none rounded-2xl border bg-background py-2.5 text-sm leading-snug field-sizing-fixed md:text-sm"
         onChange={(event) => setDraft(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+        onKeyDown={async (event) => {
+          if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) {
             event.preventDefault();
             if (canSend) {
-              void actions.submitMessage(draft);
-              setDraft("");
+              if (await actions.submitMessage(draft)) setDraft("");
             }
           }
         }}
@@ -602,16 +634,17 @@ function ChatComposer({ state, actions }) {
         전송
       </Button>
     </form>
+    </div>
   );
 }
 
 function FeedbackScreen({ state, actions }) {
+  const takeaway = feedbackTakeaway(state.latestFeedbackText);
   return (
     <Card>
-      <img className="aspect-video w-full rounded-t-xl object-cover" src="/assets/feedback-report.jpg" alt="피드백 리포트" />
       <CardHeader>
-        <CardTitle>피드백 리포트</CardTitle>
-        <CardDescription>{state.isBusy ? "대화 내용을 바탕으로 피드백을 생성하고 있습니다." : "훈련 결과를 확인하세요."}</CardDescription>
+        <CardTitle>이번 대화에서 가져갈 한 가지</CardTitle>
+        <CardDescription>{state.isBusy ? "실제로 나눈 대화를 읽고, 다음에 바꿔볼 말을 정리하고 있어요." : "잘한 점을 확인하고, 대체 문장 하나를 내 말투로 바꿔보세요. AI 피드백은 참고용입니다."}</CardDescription>
       </CardHeader>
       <CardContent className="feedback-content grid gap-3">
         {state.shareNotice ? <Alert><CheckCircle2 /><AlertTitle>공유</AlertTitle><AlertDescription>{state.shareNotice}</AlertDescription></Alert> : null}
@@ -629,7 +662,10 @@ function FeedbackScreen({ state, actions }) {
             </AlertDescription>
           </Alert>
         ) : state.latestFeedbackText ? (
-          <div dangerouslySetInnerHTML={{ __html: state.latestFeedbackHtml }} />
+          <>
+            {takeaway ? <aside className="grid gap-2 rounded-xl bg-secondary p-4 text-secondary-foreground"><h2 className="text-base font-semibold">다음 대화에서 해볼 것</h2><p className="text-sm leading-relaxed">{takeaway}</p></aside> : null}
+            <details open={!takeaway}><summary className="cursor-pointer py-3 text-sm font-semibold text-primary">전체 피드백 읽기</summary><div dangerouslySetInnerHTML={{ __html: state.latestFeedbackHtml }} /></details>
+          </>
         ) : (
           <p className="text-muted-foreground">잠시만 기다려주세요.</p>
         )}
@@ -647,13 +683,13 @@ function HistoryScreen({ state, actions }) {
       {state.shareNotice ? <Alert><CheckCircle2 /><AlertTitle>기록</AlertTitle><AlertDescription>{state.shareNotice}</AlertDescription></Alert> : null}
       <Card>
         <CardHeader>
-          <CardTitle>성장 요약</CardTitle>
-          <CardDescription>반복 훈련과 최근 피드백을 요약합니다.</CardDescription>
+          <CardTitle>최근 피드백 요약</CardTitle>
+          <CardDescription>훈련 횟수와 가장 최근의 피드백을 확인합니다.</CardDescription>
         </CardHeader>
         <CardContent className="grid grid-cols-2 gap-3">
           <Metric label="전체 훈련" value={formatCount(stats.totalConversations)} />
           <Metric label="이번 달" value={formatCount(stats.thisMonthConversations)} />
-          <p className="col-span-full text-sm text-muted-foreground"><b>최근 피드백</b> {stats.recentFeedbackThemes?.[0] || "피드백이 쌓이면 반복 포인트를 보여줍니다."}</p>
+          <p className="col-span-full text-sm text-muted-foreground"><b>최근 피드백</b> {stats.recentFeedbackThemes?.[0] || "아직 피드백이 없습니다."}</p>
         </CardContent>
       </Card>
       <Card>
@@ -685,7 +721,7 @@ function HistoryCard({ item, state, actions }) {
         {item.feedbackSummary ? <p className="rounded-xl bg-muted p-3 text-sm">{item.feedbackSummary}</p> : null}
         <div className="grid grid-cols-2 gap-2">
           <Button variant="outline" onClick={() => { actions.loadHistoryDetail(item.id); actions.goTo("historyDetail"); }}>상세</Button>
-          <Button variant="secondary" onClick={() => active ? actions.continueHistoryConversation(item.id) : actions.restoreSession(item.session)}>
+          <Button variant="secondary" disabled={state.isBusy} onClick={() => active ? actions.continueHistoryConversation(item.id) : actions.repracticeConversation(item)}>
             {active ? "대화 이어가기" : "같은 설정으로 다시"}
           </Button>
         </div>
@@ -696,7 +732,7 @@ function HistoryCard({ item, state, actions }) {
 
 function HistoryDetailScreen({ state, actions }) {
   const item = state.history.detail;
-  if (!item) return <EmptyCard text="기록을 불러오는 중입니다." />;
+  if (!item) return <EmptyCard text={state.history.loading ? "기록을 불러오는 중입니다." : <span className="break-keep [overflow-wrap:anywhere]">훈련 기록을 찾지 못했습니다. 기록 목록에서 다시 선택해주세요.</span>} />;
   const labels = sessionLabels(item.session, state.personas);
   const active = item.status !== "finished";
   return (
@@ -712,7 +748,7 @@ function HistoryDetailScreen({ state, actions }) {
           {item.session?.visibleScene ? <p className="rounded-xl bg-muted p-3 text-sm">{item.session.visibleScene}</p> : null}
           <p><b>훈련 초점</b> {labels.goal}</p>
           <div className="grid gap-2">
-            <Button onClick={() => active ? actions.resumeConversation(item) : actions.restoreSession(item.session)}>{active ? "대화 이어가기" : "같은 설정으로 다시 훈련"}</Button>
+            <Button disabled={state.isBusy} onClick={() => active ? actions.resumeConversation(item) : actions.repracticeConversation(item)}>{active ? "대화 이어가기" : "같은 설정으로 다시 훈련"}</Button>
             <div className="grid grid-cols-3 gap-2">
               <Button variant="secondary" onClick={actions.saveHistoryDetail}><Download />저장</Button>
               <Button variant="outline" onClick={actions.copyHistoryDetail}><Copy />복사</Button>
@@ -1323,6 +1359,8 @@ function AdminAccordion({ value, title, children }) {
 }
 
 const openaiChatModels = [
+  { value: "gpt-6-luna", label: "GPT 6 Luna" },
+  { value: "gpt-6.1-sol", label: "GPT 6.1 Sol" },
   { value: "gpt-5.5-mini", label: "GPT 5.5 mini" },
   { value: "gpt-5.5", label: "GPT 5.5" },
   { value: "gpt-5.4-mini", label: "GPT 5.4 mini" },
@@ -1331,6 +1369,8 @@ const openaiChatModels = [
 ];
 
 const openaiFeedbackModels = [
+  { value: "gpt-6-luna", label: "GPT 6 Luna" },
+  { value: "gpt-6.1-sol", label: "GPT 6.1 Sol" },
   { value: "gpt-5.5", label: "GPT 5.5" },
   { value: "gpt-5.5-mini", label: "GPT 5.5 mini" },
   { value: "gpt-5.4", label: "GPT 5.4" },
@@ -1338,6 +1378,7 @@ const openaiFeedbackModels = [
 ];
 
 const anthropicChatModels = [
+  { value: "claude-haiku-5-5", label: "Claude Haiku 5.5" },
   { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
   { value: "claude-opus-4-7", label: "Claude Opus 4.7" },
   { value: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
@@ -1347,6 +1388,7 @@ const anthropicChatModels = [
 ];
 
 const anthropicFeedbackModels = [
+  { value: "claude-haiku-5-5", label: "Claude Haiku 5.5" },
   { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
   { value: "claude-opus-4-7", label: "Claude Opus 4.7" },
   { value: "claude-opus-4-6", label: "Claude Opus 4.6" },
@@ -1356,22 +1398,22 @@ const anthropicFeedbackModels = [
 const defaultModelSettings = {
   chat: {
     provider: "openai",
-    model: "gpt-5.4-mini",
-    maxOutputTokens: 1400,
+    model: "gpt-6.1-sol",
+    maxOutputTokens: 1536,
     temperature: "",
     topP: "",
-    reasoningEffort: "high",
+    reasoningEffort: "low",
     thinkingType: "disabled",
     thinkingBudgetTokens: 8192,
     thinkingDisplay: "omitted"
   },
   feedback: {
     provider: "openai",
-    model: "gpt-5.4",
-    maxOutputTokens: 2600,
+    model: "gpt-6.1-sol",
+    maxOutputTokens: 4096,
     temperature: "",
     topP: "",
-    reasoningEffort: "medium",
+    reasoningEffort: "low",
     thinkingType: "disabled",
     thinkingBudgetTokens: 8192,
     thinkingDisplay: "omitted"
@@ -1394,6 +1436,7 @@ function ModelSettingsCard({ kind, title, description, settings, onChange }) {
   const defaults = defaultModelSettings[prefix];
   const merged = { ...defaults, ...settings };
   const provider = merged.provider === "anthropic" ? "anthropic" : "openai";
+  const haiku55 = provider === "anthropic" && merged.model === "claude-haiku-5-5";
   const modelOptions =
     provider === "anthropic"
       ? kind === "feedback"
@@ -1437,7 +1480,10 @@ function ModelSettingsCard({ kind, title, description, settings, onChange }) {
           id={`${prefix}-model`}
           label="모델"
           value={merged.model || defaults.model}
-          onChange={(model) => update("model", model)}
+          onChange={(model) => {
+            update("model", model);
+            if (model === "gpt-6.1-sol" && !["low", "medium", "high", "xhigh", "max"].includes(merged.reasoningEffort)) update("reasoningEffort", "low");
+          }}
           placeholder="모델 선택"
           options={modelOptions}
         />
@@ -1457,6 +1503,7 @@ function ModelSettingsCard({ kind, title, description, settings, onChange }) {
             <Label htmlFor={`${prefix}-temperature`}>Temperature</Label>
             <Input
               id={`${prefix}-temperature`}
+              disabled={haiku55}
               type="number"
               min="0"
               max="2"
@@ -1471,6 +1518,7 @@ function ModelSettingsCard({ kind, title, description, settings, onChange }) {
           <Label htmlFor={`${prefix}-top-p`}>Top P</Label>
           <Input
             id={`${prefix}-top-p`}
+            disabled={haiku55}
             type="number"
             min="0"
             max="1"
@@ -1480,38 +1528,46 @@ function ModelSettingsCard({ kind, title, description, settings, onChange }) {
             onChange={(event) => update("topP", event.target.value)}
           />
         </div>
-        {provider === "openai" ? (
+        {(provider === "openai" || haiku55) && (
           <SelectControl
             id={`${prefix}-reasoning`}
             label="추론 강도 (reasoning effort)"
             value={merged.reasoningEffort || defaults.reasoningEffort}
             onChange={(reasoningEffort) => update("reasoningEffort", reasoningEffort)}
             placeholder="추론 강도"
-            options={[
+            options={(haiku55 ? [
+              { value: "low", label: "낮음" },
+              { value: "medium", label: "중간" },
+              { value: "high", label: "높음" }
+            ] : [
               { value: "none", label: "없음" },
               { value: "minimal", label: "최소" },
               { value: "low", label: "낮음" },
               { value: "medium", label: "중간" },
               { value: "high", label: "높음" },
-              { value: "xhigh", label: "매우 높음" }
-            ]}
+              { value: "xhigh", label: "매우 높음" },
+              ...(merged.model === "gpt-6.1-sol" ? [{ value: "max", label: "최대" }] : [])
+            ]).filter(option => merged.model === "gpt-6.1-sol"
+              ? ["low", "medium", "high", "xhigh", "max"].includes(option.value)
+              : merged.model !== "gpt-6-luna" || option.value !== "minimal")}
           />
-        ) : (
+        )}
+        {provider === "anthropic" && (
           <div className="grid gap-3 rounded-2xl border bg-muted/30 p-3">
             <p className="text-xs font-black uppercase text-primary">Anthropic 추론(Thinking)</p>
             <SelectControl
               id={`${prefix}-thinking-type`}
               label="Thinking 유형"
-              value={merged.thinkingType || defaults.thinkingType}
+              value={haiku55 && merged.thinkingType === "enabled" ? "adaptive" : merged.thinkingType || defaults.thinkingType}
               onChange={(thinkingType) => update("thinkingType", thinkingType)}
               placeholder="Thinking"
               options={[
                 { value: "disabled", label: "끔" },
                 { value: "adaptive", label: "Adaptive" },
                 { value: "enabled", label: "Enabled (예산)" }
-              ]}
+              ].filter(option => !haiku55 || option.value !== "enabled")}
             />
-            {merged.thinkingType === "enabled" ? (
+            {merged.thinkingType === "enabled" && !haiku55 ? (
               <div className="grid gap-2">
                 <Label htmlFor={`${prefix}-thinking-budget`}>Thinking 예산 토큰</Label>
                 <Input
@@ -1553,10 +1609,10 @@ function AdminSettings({ settings, onSave }) {
 
   useEffect(() => {
     setForm(normalizeAdminSettings(settings));
-    setStatus("");
   }, [settingsSyncKey]);
 
   const update = (path, value) => {
+    setStatus("");
     setForm((current) => {
       const next = structuredClone(current);
       const keys = path.split(".");
@@ -1588,6 +1644,7 @@ function AdminSettings({ settings, onSave }) {
             />
             <Button
               onClick={async () => {
+                setStatus("");
                 try {
                   await onSave(form);
                   setStatus("저장했습니다.");
@@ -1598,7 +1655,7 @@ function AdminSettings({ settings, onSave }) {
             >
               모델 설정 저장
             </Button>
-            {status ? <p className="text-sm text-muted-foreground">{status}</p> : null}
+            {status ? <p role="status" className="text-sm text-muted-foreground">{status}</p> : null}
           </div>
         </AccordionContent>
       </AccordionItem>

@@ -36,6 +36,7 @@ export function usageEventLabel(type = "") {
     chat_start: "대화 시작",
     chat_message: "메시지",
     feedback: "피드백",
+    feedback_verify: "피드백 검증",
     opening_line_generation: "첫 문장 생성"
   }[type] || type || "기록";
 }

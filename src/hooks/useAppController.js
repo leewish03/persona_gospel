@@ -3,9 +3,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { deleteJson, getJson, postJson, putJson } from "@/lib/api";
 import { flowScreens, profileDefaults, setupScreens } from "@/lib/constants";
 import { markdownToHtml, sessionLabels } from "@/lib/format";
+import { feedbackTakeaway } from "@/lib/feedbackTakeaway";
+import { beginnerSession } from "@/lib/trainingGuides";
 
 function isProfileComplete(profile = {}) {
-  return Boolean(profile.name && profile.age && profile.gender && profile.church && profile.useCase);
+  return Boolean(String(profile.name || "").trim());
 }
 
 function cleanProfile(profile = {}) {
@@ -114,6 +116,7 @@ export function useAppController() {
   const [messages, setMessages] = useState([]);
   const [latestFeedbackText, setLatestFeedbackText] = useState("");
   const [feedbackError, setFeedbackError] = useState("");
+  const [practiceFocus, setPracticeFocus] = useState("");
   const [sessionStarted, setSessionStarted] = useState(false);
   const [waitingForAssistant, setWaitingForAssistant] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
@@ -166,6 +169,7 @@ export function useAppController() {
           return false;
         }
       }
+      if (["persona", "context"].includes(screen)) setPracticeFocus("");
       if (screen === "review") setReviewConfirmed(false);
       if (!options.fromHistory && !options.replace && currentScreen && currentScreen !== screen) {
         setScreenStack((stack) => [...stack.slice(-29), currentScreen]);
@@ -204,6 +208,7 @@ export function useAppController() {
       return;
     }
     setScreenStack([]);
+    setPracticeFocus("");
     setActiveSession(null);
     setConversationId("");
     setMessages([]);
@@ -218,6 +223,7 @@ export function useAppController() {
 
   const resetAllConfirmed = useCallback(() => {
     setScreenStack([]);
+    setPracticeFocus("");
     setActiveSession(null);
     setConversationId("");
     setMessages([]);
@@ -346,6 +352,7 @@ export function useAppController() {
         loading: false
       }));
       if (conversationId === id) {
+        setPracticeFocus("");
         setActiveSession(null);
         setConversationId("");
         setMessages([]);
@@ -555,9 +562,8 @@ export function useAppController() {
   }, [contextForm]);
 
   const saveProfile = useCallback(async () => {
-    const values = [profileForm.name, profileForm.age, profileForm.gender, profileForm.church, profileForm.useCase];
-    if (!values.every((value) => String(value || "").trim())) {
-      setErrors((value) => ({ ...value, profile: "이름, 나이, 성별, 소속 교회, 사용 용도를 모두 입력해주세요." }));
+    if (!String(profileForm.name || "").trim() || String(profileForm.name).trim().length > 40) {
+      setErrors((value) => ({ ...value, profile: "이름 또는 별명을 1~40자로 입력해주세요." }));
       return;
     }
     setIsBusy(true);
@@ -575,6 +581,7 @@ export function useAppController() {
   const devLogin = useCallback(async () => {
     setErrors((value) => ({ ...value, auth: "" }));
     try {
+      await getJson("/api/me");
       const data = await postJson("/api/dev-login", { email: "dev@example.local", displayName: "개발용 사용자" });
       setAuth((value) => ({ ...value, user: data.user, limits: data.limits || value.limits }));
       fillProfileForm(data.user);
@@ -623,32 +630,46 @@ export function useAppController() {
 
   const submitMessage = useCallback(async (content) => {
     const clean = String(content || "").trim();
-    if (!clean || isBusy || !sessionStarted) return;
-    const nextMessages = [...messages, { role: "user", content: clean }];
-    setMessages(nextMessages);
+    if (!clean || isBusy || !sessionStarted) return false;
+    const canonicalMessages = messages.filter((message) => message.role !== "system");
+    const nextMessages = [...canonicalMessages, { role: "user", content: clean }];
     setWaitingForAssistant(true);
     setIsBusy(true);
     try {
       const data = await postJson("/api/chat", {
         conversationId,
-        session: currentSession,
-        messages: nextMessages.filter((message) => message.role !== "system")
+        expectedMessageCount: canonicalMessages.length,
+        message: { role: "user", content: clean }
       });
       if (data.limits) setAuth((value) => ({ ...value, limits: data.limits }));
       setMessages([...nextMessages, { role: "assistant", content: data.text }]);
-      setWaitingForAssistant(false);
+      return true;
     } catch (error) {
-      if ([404, 409].includes(Number(error?.status || 0))) {
-        setConversationId("");
-        setActiveSession(null);
-        setSessionStarted(false);
+      let restoredMessages = canonicalMessages;
+      if (Number(error?.status) === 409 || !error?.status) {
+        try {
+          const data = await getJson(`/api/conversations/${encodeURIComponent(conversationId)}`);
+          restoredMessages = data.conversation.messages || [];
+          setSessionStarted(data.conversation.status !== "finished");
+          const accepted = restoredMessages.length === canonicalMessages.length + 2 &&
+            canonicalMessages.every((message, index) => message.role === restoredMessages[index]?.role && message.content === restoredMessages[index]?.content) &&
+            restoredMessages[canonicalMessages.length]?.role === "user" && restoredMessages[canonicalMessages.length]?.content === clean;
+          if (accepted) {
+            setMessages(restoredMessages);
+            return true;
+          }
+        } catch (reloadError) {
+          if (Number(reloadError?.status) === 404) setSessionStarted(false);
+        }
       }
-      setMessages([...nextMessages, { role: "system", content: userMessageForError(error, "chat") }]);
-      setWaitingForAssistant(false);
+      if (Number(error?.status) === 404) setSessionStarted(false);
+      setMessages([...restoredMessages, { role: "system", content: userMessageForError(error, "chat") }]);
+      return false;
     } finally {
+      setWaitingForAssistant(false);
       setIsBusy(false);
     }
-  }, [conversationId, currentSession, isBusy, messages, sessionStarted]);
+  }, [conversationId, isBusy, messages, sessionStarted]);
 
   const finishSession = useCallback(async () => {
     const userTurns = messages.filter((message) => message.role === "user").length;
@@ -670,9 +691,7 @@ export function useAppController() {
     setCurrentScreen("feedback");
     try {
       const data = await postJson("/api/feedback", {
-        conversationId,
-        session: currentSession,
-        messages: messages.filter((message) => message.role !== "system")
+        conversationId
       });
       if (data.limits) setAuth((value) => ({ ...value, limits: data.limits }));
       setLatestFeedbackText(data.text);
@@ -681,7 +700,7 @@ export function useAppController() {
     } catch (error) {
       setLatestFeedbackText("");
       setFeedbackError(userMessageForError(error, "feedback"));
-      if ([404, 409].includes(Number(error?.status || 0))) {
+      if (Number(error?.status) === 404) {
         setConversationId("");
         setActiveSession(null);
         setSessionStarted(false);
@@ -732,7 +751,9 @@ export function useAppController() {
     }
   }, [deleteAccountConfirmed, deleteHistoryDetailConfirmed, finishSessionConfirmed, goTo, pendingDialog, resetAllConfirmed]);
 
-  const restoreSession = useCallback((session = {}) => {
+  const restoreSession = useCallback((session = {}, focus = "") => {
+    if (isBusy || waitingForAssistant) return;
+    setPracticeFocus(focus);
     setSelectedPersonaId(session.personaId || selectedPersonaId);
     setContextForm({ relationship: session.relationship || "", setting: session.setting || "", goal: session.goal || "" });
     setActiveSession(null);
@@ -744,9 +765,26 @@ export function useAppController() {
     setWaitingForAssistant(false);
     setReviewConfirmed(false);
     goTo("review");
-  }, [goTo, selectedPersonaId]);
+  }, [goTo, isBusy, selectedPersonaId, waitingForAssistant]);
+
+  const repracticeConversation = useCallback(async (conversation = {}) => {
+    if (isBusy || waitingForAssistant) return;
+    setIsBusy(true);
+    setErrors((value) => ({ ...value, global: "" }));
+    try {
+      const detail = typeof conversation.feedbackText === "string" ? conversation :
+        (await getJson(`/api/conversations/${encodeURIComponent(conversation.id)}`)).conversation;
+      if (!detail?.session) throw new Error("훈련 기록을 불러오지 못했습니다. 목록을 새로고침해주세요.");
+      restoreSession(detail.session, feedbackTakeaway(detail.feedbackText));
+    } catch (error) {
+      setErrors((value) => ({ ...value, global: userMessageForError(error, "historyDetail") }));
+    } finally {
+      setIsBusy(false);
+    }
+  }, [isBusy, restoreSession, waitingForAssistant]);
 
   const resumeConversation = useCallback((conversation = {}) => {
+    setPracticeFocus("");
     const session = conversation.session || {};
     setSelectedPersonaId(session.personaId || selectedPersonaId);
     setContextForm({ relationship: session.relationship || "", setting: session.setting || "", goal: session.goal || "" });
@@ -842,12 +880,25 @@ export function useAppController() {
     if (index >= 0 && index < flowScreens.length - 1) return goTo(flowScreens[index + 1]);
   }, [currentScreen, fillProfileForm, finishSession, goTo, hasUser, profileComplete, reviewConfirmed, saveProfile, shareFeedback, startSession, validateContext]);
 
+  const prepareBeginnerSession = useCallback(() => {
+    if (isBusy || !hasUser || !profileComplete) return;
+    setPracticeFocus("");
+    const { personaId, ...context } = beginnerSession;
+    setSelectedPersonaId(personaId);
+    setContextForm(context);
+    setActiveSession(null);
+    goTo("review");
+  }, [goTo, hasUser, isBusy, profileComplete]);
+
   const handleSecondaryAction = useCallback(async () => {
+    if (isBusy) return;
     if (currentScreen === "persona" && personas.length) {
+      setPracticeFocus("");
       setSelectedPersonaId(personas[Math.floor(Math.random() * personas.length)].id);
       return;
     }
     if (currentScreen === "context") {
+      setPracticeFocus("");
       const random = (items) => items[Math.floor(Math.random() * items.length)];
       setContextForm({
         relationship: random(["first_meeting", "acquaintance", "casual_friend", "old_friend", "prior_faith_talk"]),
@@ -858,13 +909,9 @@ export function useAppController() {
       return;
     }
     if (currentScreen === "feedback") {
-      setMessages([]);
-      setLatestFeedbackText("");
-      setFeedbackError("");
-      setSessionStarted(false);
-      await startSession();
+      await repracticeConversation({ session: currentSession, feedbackText: latestFeedbackText });
     }
-  }, [currentScreen, personas, startSession]);
+  }, [currentScreen, currentSession, isBusy, latestFeedbackText, personas, repracticeConversation]);
 
   return {
     state: {
@@ -885,6 +932,7 @@ export function useAppController() {
       latestFeedbackText,
       latestFeedbackHtml: markdownToHtml(latestFeedbackText),
       feedbackError,
+      practiceFocus,
       sessionStarted,
       waitingForAssistant,
       isBusy,
@@ -924,6 +972,7 @@ export function useAppController() {
       retryFeedback,
       returnToChatFromFeedback,
       restoreSession,
+      repracticeConversation,
       resumeConversation,
       continueHistoryConversation,
       loadHistory,
@@ -946,6 +995,7 @@ export function useAppController() {
       requestDeleteAccount,
       shareFeedback,
       handlePrimaryAction,
+      prepareBeginnerSession,
       handleSecondaryAction
     }
   };

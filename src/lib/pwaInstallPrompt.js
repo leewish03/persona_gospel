@@ -41,14 +41,16 @@ export function getPwaInstallPromptDecision({
   isInstalled,
   isPromptSupported,
   isIosSafari,
-  isInActiveChat
+  isInActiveChat,
+  isReadingFeedback = false
 }) {
   const promptState = createPwaInstallPromptState(state);
   const canExplainInstall = Boolean(isPromptSupported || isIosSafari);
   if (isInstalled || promptState.installedAt) return { shouldShow: false, reason: "installed" };
   if (!canExplainInstall) return { shouldShow: false, reason: "unsupported" };
   if (isInActiveChat) return { shouldShow: false, reason: "active-chat" };
-  if (!promptState.firstShownAt) return { shouldShow: true, reason: "first-visit" };
+  if (isReadingFeedback) return { shouldShow: false, reason: "reading-feedback" };
+  if (!promptState.lastTrainingFinishedAt) return { shouldShow: false, reason: "before-first-training" };
   if (promptState.lastTrainingFinishedAt > promptState.lastTrainingPromptedAt) {
     return { shouldShow: true, reason: "training-finished" };
   }

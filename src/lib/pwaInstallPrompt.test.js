@@ -9,7 +9,7 @@ import {
   markPwaTrainingFinished
 } from "./pwaInstallPrompt.js";
 
-test("shows the install prompt on the first eligible visit", () => {
+test("does not interrupt the first visit before training", () => {
   const state = createPwaInstallPromptState();
 
   const decision = getPwaInstallPromptDecision({
@@ -21,12 +21,12 @@ test("shows the install prompt on the first eligible visit", () => {
     isInActiveChat: false
   });
 
-  assert.equal(decision.shouldShow, true);
-  assert.equal(decision.reason, "first-visit");
+  assert.equal(decision.shouldShow, false);
+  assert.equal(decision.reason, "before-first-training");
 });
 
 test("hides the install prompt during cooldown after dismissal", () => {
-  const dismissed = markPwaInstallPromptDismissed(createPwaInstallPromptState(), 2_000);
+  const dismissed = markPwaInstallPromptDismissed(createPwaInstallPromptState({ lastTrainingFinishedAt: 1_000, lastTrainingPromptedAt: 1_000 }), 2_000);
 
   const decision = getPwaInstallPromptDecision({
     state: dismissed,
@@ -42,7 +42,7 @@ test("hides the install prompt during cooldown after dismissal", () => {
 });
 
 test("shows the install prompt after cooldown expires", () => {
-  const dismissed = markPwaInstallPromptDismissed(createPwaInstallPromptState(), 2_000);
+  const dismissed = markPwaInstallPromptDismissed(createPwaInstallPromptState({ lastTrainingFinishedAt: 1_000, lastTrainingPromptedAt: 1_000 }), 2_000);
 
   const decision = getPwaInstallPromptDecision({
     state: dismissed,

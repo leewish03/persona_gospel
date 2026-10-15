@@ -4,6 +4,7 @@ WORKDIR /app
 
 COPY package.json package-lock.json ./
 COPY server.js ./
+COPY lib ./lib
 COPY data ./data
 COPY docs ./docs
 COPY prompts ./prompts

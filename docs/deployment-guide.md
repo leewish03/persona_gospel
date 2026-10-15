@@ -11,6 +11,16 @@
 - Kakao OAuth 앱 등록
 - 운영자 이메일과 후원 계좌/링크 결정
 
+## 현재 모델·프롬프트 적용 상태 (2026-10-15)
+
+목적형 대화 평가 task 7·9의 미완료 종료 기록은 [모델 평가 기록](persona-model-evaluation-2026-10-15.md)에 보존했다. 이후 사용자 승인으로 수행한 새 수정에서는 경험 귀속·피드백 의미 검증을 보강하고 Sol을 비교했다. 최신 결과와 한계는 [수정 기록](persona-repair-2026-10-15.md)을 따른다. 전체 품질이나 실제 교육 효과의 합격을 뜻하지 않는다.
+
+신규 앱 초기값은 chat=gpt-6.1-sol/low/1536, feedback=gpt-6.1-sol/low/4096이다. 피드백에는 같은 설정의 의미 검증이 추가되며 최대 초안 2회·검증 2회다. 저장된 관리자 설정이 환경변수 기반 초기값보다 우선하므로 기존 설치의 실제 모델·상한은 다를 수 있다. 운영 저장값·환경변수는 자동 변경하지 않았다.
+
+원격 Langfuse 프롬프트가 있으면 로컬 파일보다 우선한다. 관리자 인증 후 GET /api/admin/langfuse-prompts로 source·label·version을, GET /api/admin/settings로 ai.chat·ai.feedback의 실제 저장값을 확인한다. 원격 프롬프트의 로컬 검증 버전 81을 운영 버전으로 사용하면 안 된다. 로컬 fallback은 서버 시작 때 읽으므로 파일을 바꾼 뒤 관리자 프롬프트 새로고침만으로는 반영되지 않는다. 프로세스 재시작 후 출처와 해시를 다시 확인한다.
+
+이전 .omo/evidence/purposeful-persona-training/rollout.md와 task-8/local-rollout-payload.json은 당시 준비 기록이며 이번 수정 전체를 담지 않는다. 새 운영 프롬프트는 게시하지 않았다. 적용 전 현재 파일로 payload를 다시 만들고 이전 원격 버전·label과 기존 설정을 기록한다. 문제가 생기면 이전 label/파일 해시를 복원한 뒤 재시작한다. Docker 로컬 컨테이너 실행은 미검증이다.
+
 ## 현재 앱 구조
 
 - Node.js 단일 서버
@@ -66,10 +76,10 @@ OAuth: Google/Kakao
 
 ```text
 OPENAI_API_KEY=sk-...
-OPENAI_CHAT_MODEL=gpt-5.4-mini
-OPENAI_CHAT_REASONING_EFFORT=high
-OPENAI_FEEDBACK_MODEL=gpt-5.4
-OPENAI_FEEDBACK_REASONING_EFFORT=medium
+OPENAI_CHAT_MODEL=gpt-6.1-sol
+OPENAI_CHAT_REASONING_EFFORT=low
+OPENAI_FEEDBACK_MODEL=gpt-6.1-sol
+OPENAI_FEEDBACK_REASONING_EFFORT=low
 APP_BASE_URL=https://서비스도메인
 ADMIN_EMAILS=owner@example.com
 
