@@ -155,11 +155,11 @@ const defaultSettings = {
     monthlyBudgetKrw: 0
   },
   limits: {
-    dailyStarts: Number(globalThis.process?.env?.DAILY_USER_START_LIMIT || 30),
-    dailyChatMessages: Number(globalThis.process?.env?.DAILY_USER_CHAT_LIMIT || 300),
-    dailyFeedbacks: Number(globalThis.process?.env?.DAILY_USER_FEEDBACK_LIMIT || 20),
-    dailyAppFeedbacks: Number(globalThis.process?.env?.DAILY_USER_APP_FEEDBACK_LIMIT || 10),
-    monthlyGlobalBudgetKrw: Number(globalThis.process?.env?.MONTHLY_GLOBAL_BUDGET_KRW || 0)
+    dailyStarts: Number(globalThis.process?.env?.DAILY_USER_START_LIMIT || 0),
+    dailyChatMessages: Number(globalThis.process?.env?.DAILY_USER_CHAT_LIMIT || 0),
+    dailyFeedbacks: Number(globalThis.process?.env?.DAILY_USER_FEEDBACK_LIMIT || 0),
+    dailyAppFeedbacks: Number(globalThis.process?.env?.DAILY_USER_APP_FEEDBACK_LIMIT || 0),
+    monthlyGlobalBudgetKrw: Number(globalThis.process?.env?.MONTHLY_GLOBAL_BUDGET_KRW || 50000)
   },
   openingLines: {
     latest: null
@@ -190,6 +190,7 @@ const defaultSettings = {
   }
 };
 
+let usageLedgerAvailable = true;
 const db = await loadDb();
 initializeExchangeRateState();
 await refreshUsdToKrw({ force: true, persist: true });
@@ -216,6 +217,7 @@ async function loadDb() {
     try {
       return await loadSupabaseDb();
     } catch (error) {
+      usageLedgerAvailable = false;
       console.error("Supabase load failed. Falling back to JSON storage.", error);
     }
   }
@@ -734,12 +736,21 @@ function appFeedbackToSupabase(feedback) {
   };
 }
 
+async function loadUsageEvents() {
+  const events = [];
+  for (let offset = 0; ; offset += 1000) {
+    const page = await supabaseRequest(`usage_events?select=*&order=created_at.desc,id.desc&limit=1000&offset=${offset}`);
+    events.push(...page);
+    if (page.length < 1000) return events;
+  }
+}
+
 async function loadSupabaseDb() {
   const [users, conversations, messages, usageEvents, settingsRows, appFeedbacks] = await Promise.all([
     supabaseRequest("app_users?select=*"),
     supabaseRequest("conversations?select=*&order=created_at.desc"),
     supabaseRequest("conversation_messages?select=*&order=sort_order.asc"),
-    supabaseRequest("usage_events?select=*&order=created_at.desc&limit=5000"),
+    loadUsageEvents(),
     supabaseRequest("app_settings?select=*"),
     supabaseRequest("app_feedbacks?select=*&order=created_at.desc&limit=1000")
   ]);
@@ -842,7 +853,6 @@ const settingGuidance = {
   faith_topic_arose: "사용자와 페르소나 사이에서 신앙이나 교회 이야기가 자연스럽게 언급된 직후다. 첫 응답에는 페르소나가 그 주제에 대해 느끼는 궁금함, 부담감, 망설임, 과거 경험 중 하나가 자연스럽게 들어가야 한다. 페르소나는 바로 신앙을 받아들이지 않는다."
 };
 
-const CHAT_USER_TURN_LIMIT = 500;
 
 const goalLabels = {
   listen_and_understand: "상대의 말 듣고 이해하기",
@@ -1438,7 +1448,11 @@ function startOfDay(date = new Date()) {
 
 function isSameDay(iso, base = new Date()) {
   const date = new Date(iso);
-  return Number.isFinite(date.getTime()) && date >= startOfDay(base);
+  return Number.isFinite(date.getTime()) && koreanDateKey(date) === koreanDateKey(base);
+}
+
+function koreanDateKey(date = new Date()) {
+  return new Date(date.getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
 function activeLimits() {
@@ -1450,7 +1464,7 @@ function countUserUsageToday(userId, eventType) {
 }
 
 function monthlyGlobalCostKrw() {
-  const monthly = db.usageEvents.filter((event) => isSameMonth(event.createdAt));
+  const monthly = db.usageEvents.filter((event) => koreanDateKey(new Date(event.createdAt)).slice(0, 7) === koreanDateKey().slice(0, 7));
   const usd = monthly.reduce((total, event) => total + Number(event.estimatedCostUsd || 0), 0);
   return Number((usd * currentUsdToKrw()).toFixed(2));
 }
@@ -1471,7 +1485,7 @@ function checkUsageLimit(user, eventType, res) {
     feedback: { key: "dailyFeedbacks", label: "피드백 생성" }
   };
   const globalBudget = Number(limits.monthlyGlobalBudgetKrw || db.settings?.cost?.monthlyBudgetKrw || 0);
-  if (globalBudget > 0 && monthlyGlobalCostKrw() >= globalBudget) {
+  if (globalBudget > 0 && monthlyGlobalCostKrw() >= globalBudget * (eventType === "chat_start" ? 0.9 : 1)) {
     usageLimitResponse(res, "이번 달 운영 예산 한도에 도달했습니다. 운영자에게 문의해주세요.", {
       type: "monthlyGlobalBudgetKrw",
       limit: globalBudget,
@@ -1485,7 +1499,7 @@ function checkUsageLimit(user, eventType, res) {
   if (limit <= 0) return true;
   const used = countUserUsageToday(user.id, eventType);
   if (used >= limit) {
-    usageLimitResponse(res, `오늘의 ${target.label} 한도에 도달했습니다. 내일 다시 이용해주세요.`, {
+    usageLimitResponse(res, `오늘의 ${target.label} 한도에 도달했습니다. 한국 시간 자정 이후 다시 이용해주세요.`, {
       type: target.key,
       limit,
       used
@@ -1604,6 +1618,8 @@ function isMaxOutputIncomplete(error) {
 }
 
 const conversationMutations = new Set();
+// shortcut: one process owns admission; use a shared atomic ledger before adding server instances.
+const userModelRequests = new Set();
 const capacityMessage = "대화가 모델의 처리 용량을 넘었습니다. 기록은 보존되어 있으며 기록에서 내보낼 수 있습니다. 새 훈련을 시작하거나 관리자에게 모델 변경을 요청해주세요.";
 
 function contextCapacityError() {
@@ -1736,6 +1752,34 @@ function assertProviderKey(provider) {
   return appOpenAIKey;
 }
 
+function modelBudgetError() {
+  return Object.assign(new Error("이번 달 운영 예산의 남은 한도로 요청을 처리할 수 없습니다. 운영자에게 문의해주세요."), { code: "USAGE_LIMIT_REACHED" });
+}
+
+function reserveModelUsage({ settings, modelType, instructions, input, staticSystemBlocks, dynamicInput, traceContext }) {
+  if (!usageLedgerAvailable) throw Object.assign(new Error("사용량 기록을 확인할 수 없어 잠시 생성을 중단했습니다. 운영자에게 문의해주세요."), { code: "USAGE_LEDGER_UNAVAILABLE", statusCode: 503 });
+  const parts = settings.provider === "anthropic" ? [instructions, ...staticSystemBlocks, dynamicInput || input] : [instructions, input || [...staticSystemBlocks, dynamicInput].filter(Boolean).join("\n\n")];
+  const inputBound = parts.reduce((sum, part) => sum + Buffer.byteLength(String(part || ""), "utf8") + 64, 1024);
+  const outputBound = settings.provider === "anthropic"
+    ? Math.max(settings.maxOutputTokens, Math.min(64000, Math.max(1024, Number(settings.thinkingBudgetTokens) || 8192) + 2048))
+    : settings.maxOutputTokens;
+  const usage = { inputTokens: settings.provider === "anthropic" ? 0 : inputBound, cacheCreationInputTokens: inputBound, outputTokens: outputBound };
+  const cost = estimateCost({ ...settings, modelType, ...usage });
+  const cap = Number(activeLimits().monthlyGlobalBudgetKrw || db.settings?.cost?.monthlyBudgetKrw || 0);
+  const eventType = traceContext?.name?.split("/").at(-1) || "model_generation";
+  const threshold = eventType === "chat_start" ? cap * 0.9 : cap;
+  if (cap > 0 && monthlyGlobalCostKrw() + cost.estimatedCostKrw > threshold) throw modelBudgetError();
+  const event = { id: randomUUID(), userId: traceContext?.userId || "", conversationId: traceContext?.sessionId || "", eventType, provider: settings.provider, model: settings.model, ...usage, ...cost, createdAt: new Date().toISOString() };
+  db.usageEvents.unshift(event);
+  return event;
+}
+
+async function persistModelUsage(event) {
+  // Persist the upper bound before dispatch; an interrupted call must retain its reservation.
+  await writeFile(dbPath, JSON.stringify(db, null, 2), "utf8");
+  if (supabaseUrl && supabaseServiceRoleKey) await supabaseRequest("usage_events?on_conflict=id", { method: "POST", body: [appUsageToSupabase(event)] });
+}
+
 async function callModelWithUsage({
   modelType,
   instructions,
@@ -1749,6 +1793,9 @@ async function callModelWithUsage({
 }) {
   const settings = { ...modelSettingsFor(modelType), ...overrides };
   const contextPreflight = assertModelCapacity(settings, instructions, input, staticSystemBlocks, dynamicInput);
+  assertProviderKey(settings.provider);
+  const reservation = reserveModelUsage({ settings, modelType, instructions, input, staticSystemBlocks, dynamicInput, traceContext });
+  await persistModelUsage(reservation);
   const invoke = async () => {
     const apiKey = assertProviderKey(settings.provider);
     if (settings.provider === "anthropic") {
@@ -1785,15 +1832,26 @@ async function callModelWithUsage({
     return { ...result, provider: settings.provider, model: settings.model };
   };
 
-  if (!traceContext) return invoke();
-  return traceModelCall({
-    ...traceContext,
-    metadata: { ...traceContext.metadata, contextPreflight },
-    langfusePrompt: langfusePrompt || traceContext.langfusePrompt || null,
-    model: settings.model,
-    modelType,
-    run: invoke
-  });
+  let result;
+  let failure;
+  try {
+    result = await (traceContext ? traceModelCall({
+      ...traceContext,
+      metadata: { ...traceContext.metadata, contextPreflight },
+      langfusePrompt: langfusePrompt || traceContext.langfusePrompt || null,
+      model: settings.model, modelType, run: invoke
+    }) : invoke());
+  } catch (error) {
+    failure = error;
+  }
+  const response = result || failure;
+  const raw = response?.rawUsage;
+  const known = raw && Number.isFinite(raw.input_tokens) && raw.input_tokens >= 0 && Number.isFinite(raw.output_tokens) && raw.output_tokens >= 0;
+  if (known) Object.assign(reservation, response.usage, estimateCost({ ...settings, modelType, ...response.usage }));
+  if (response) response.usage = { ...(response.usage || {}), accountingEventId: reservation.id };
+  await persistModelUsage(reservation);
+  if (failure) throw failure;
+  return result;
 }
 
 async function callOpenAIWithUsage({
@@ -1816,7 +1874,7 @@ async function callOpenAIWithUsage({
     max_output_tokens: maxOutputTokens,
     store: false
   };
-  if (model === "gpt-6.1-sol" && cacheStaticSystem && staticSystemBlocks.length && dynamicInput) {
+  if (model === "gpt-6.1-sol" && cacheStaticSystem && dynamicInput) {
     delete payload.instructions;
     payload.prompt_cache_options = { mode: "explicit" };
     payload.input = [
@@ -1986,6 +2044,11 @@ function estimateUsage(input, output, usage = {}) {
 }
 
 function recordUsageEvent({ userId, conversationId = "", eventType, provider = "openai", model, modelType, input, output, usage, usageIsReported = false }) {
+  if (usage?.accountingEventId) {
+    const event = db.usageEvents.find(item => item.id === usage.accountingEventId);
+    if (event) { event.userId = userId; event.conversationId = conversationId; event.eventType = eventType; }
+    return;
+  }
   const estimatedUsage = estimateUsage(input, output, usage);
   if (usageIsReported) Object.assign(estimatedUsage, usage);
   const cost = estimateCost({ provider, model, modelType, ...estimatedUsage });
@@ -2000,7 +2063,7 @@ function recordUsageEvent({ userId, conversationId = "", eventType, provider = "
     ...cost,
     createdAt: new Date().toISOString()
   });
-  db.usageEvents = db.usageEvents.slice(0, 5000);
+
 }
 
 function normalizeGeneratedText(text = "") {
@@ -2580,14 +2643,11 @@ async function generateFeedbackWithQualityGate({ userId, conversationId, session
   async function callFeedback({ eventType, instructions, modelInput, overrides = {}, attempt }) {
     const semantic = eventType === "feedback_verify";
     const settings = { ...modelSettingsFor("feedback"), ...overrides };
-    const limits = activeLimits();
-    const globalBudget = Number(limits.monthlyGlobalBudgetKrw || db.settings?.cost?.monthlyBudgetKrw || 0);
-    if (globalBudget > 0 && monthlyGlobalCostKrw() >= globalBudget) throw Object.assign(new Error("이번 달 운영 예산 한도에 도달했습니다."), { code: "FEEDBACK_BUDGET_LIMIT" });
     let result;
     let failure;
     try {
       result = await callModelWithUsage({
-        modelType: "feedback", instructions, input: modelInput,
+        modelType: "feedback", instructions, input: modelInput, dynamicInput: modelInput, cacheStaticSystem: settings.provider === "openai" && settings.model === "gpt-6.1-sol",
         langfusePrompt: semantic ? null : feedbackPromptEntry.langfusePrompt, overrides,
         traceContext: buildPersonaTraceContext({
           eventType, userId, conversationId, session, persona, messages,
@@ -2607,7 +2667,7 @@ async function generateFeedbackWithQualityGate({ userId, conversationId, session
         inputTokens: Math.max(response.usage?.inputTokens || 0, Buffer.byteLength(instructions + modelInput, "utf8") + 256),
         outputTokens: Math.max(response.usage?.outputTokens || 0, response.maxOutputTokens || settings.maxOutputTokens)
       };
-      recordUsageEvent({ userId, conversationId, eventType, provider: settings.provider, model: settings.model, modelType: "feedback", input: modelInput, output: result?.text || "", usage, usageIsReported: Boolean(known) });
+      recordUsageEvent({ userId, conversationId, eventType, provider: settings.provider, model: settings.model, modelType: "feedback", input: modelInput, output: result?.text || "", usage: { ...usage, accountingEventId: response.usage?.accountingEventId }, usageIsReported: Boolean(known) });
       await recordAppLog({ level: known ? "info" : "warn", eventType: "feedback_usage_accounted", message: known ? "Provider usage recorded." : "Missing usage conservatively reserved using full input bytes and output allowance.", userId, conversationId, context: { attempt: attempt + 1, provider: settings.provider, model: settings.model, usageStatus: known ? "reported" : "estimated_upper_bound", usage } });
       await saveDb();
     }
@@ -3826,6 +3886,7 @@ async function handleAppApi(req, res, url) {
 async function handleApi(req, res, url) {
   const path = url.pathname;
   let lockedConversationId = "";
+  let userRequestKey = "";
   try {
     if (await handleAppApi(req, res, url)) return;
 
@@ -3835,6 +3896,15 @@ async function handleApi(req, res, url) {
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       json(res, 400, { error: "요청 형식이 올바르지 않습니다.", code: "BAD_REQUEST" });
       return;
+    }
+    if (["/api/start", "/api/chat", "/api/feedback"].includes(path)) {
+      const key = `${user.id}:${path}`;
+      if (userModelRequests.has(key)) {
+        json(res, 409, { error: "같은 요청을 처리 중입니다. 잠시 후 다시 시도해주세요.", code: "REQUEST_BUSY" });
+        return;
+      }
+      userModelRequests.add(key);
+      userRequestKey = key;
     }
     const ownedConversation = ["/api/chat", "/api/feedback"].includes(path) ? findConversationForUser(user, body.conversationId) : null;
     const session = ownedConversation?.session || body.session || {};
@@ -3934,12 +4004,6 @@ async function handleApi(req, res, url) {
         return;
       }
       const promptMessages = [...serverMessages, { role: "user", content: nextUserMessage.content }];
-      if (promptMessages.filter((message) => message.role === "user").length > CHAT_USER_TURN_LIMIT) {
-        json(res, 400, {
-          error: `한 번의 훈련에서는 최대 ${CHAT_USER_TURN_LIMIT}턴까지 대화할 수 있습니다. 피드백을 받고 새 훈련을 시작해주세요.`
-        });
-        return;
-      }
       const systemPrompt = await personaSystemPrompt();
       const prompt = roleplayPromptPartsFor(session, persona, promptMessages);
       const { text, usage, model, provider } = await callModelWithUsage({
@@ -4026,7 +4090,7 @@ async function handleApi(req, res, url) {
         });
         text = result.text;
       } catch (error) {
-        if (error?.code === "MODEL_CONTEXT_CAPACITY") throw error;
+        if (["MODEL_CONTEXT_CAPACITY", "USAGE_LIMIT_REACHED", "USAGE_LEDGER_UNAVAILABLE"].includes(error?.code)) throw error;
         console.error("Feedback generation failed.", error);
         void recordAppLog({
           level: "error",
@@ -4052,6 +4116,14 @@ async function handleApi(req, res, url) {
 
     json(res, 404, { error: "Unknown API route." });
   } catch (error) {
+    if (error?.code === "USAGE_LIMIT_REACHED") {
+      usageLimitResponse(res, error.message, { type: "monthlyGlobalBudgetKrw" });
+      return;
+    }
+    if (error?.code === "USAGE_LEDGER_UNAVAILABLE") {
+      json(res, 503, { error: error.message, code: error.code });
+      return;
+    }
     if (error?.code === "MODEL_CONTEXT_CAPACITY") {
       json(res, 422, { error: capacityMessage, code: error.code });
       return;
@@ -4067,6 +4139,7 @@ async function handleApi(req, res, url) {
     json(res, 500, publicServerError(error, { eventType: "api_unhandled_error", path, method: req.method }));
   } finally {
     if (lockedConversationId) conversationMutations.delete(lockedConversationId);
+    if (userRequestKey) userModelRequests.delete(userRequestKey);
   }
 }
 

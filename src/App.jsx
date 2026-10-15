@@ -797,7 +797,7 @@ function SettingsScreen({ state, actions }) {
       <Card>
         <CardHeader>
           <CardTitle>이용 한도</CardTitle>
-          <CardDescription>비용 보호를 위해 하루 사용량이 제한됩니다.</CardDescription>
+          <CardDescription>훈련은 개인별 횟수 제한 없이 이용할 수 있습니다. 월 운영 예산에 따라 새 훈련이나 AI 응답이 일시 중단될 수 있습니다.</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-2 text-sm">
           {usageRows.map(([label, item]) => (
